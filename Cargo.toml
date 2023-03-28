@@ -1,0 +1,21 @@
+[package]
+name = "dach-decker"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+hidapi = "2.2.0"
+elgato-streamdeck = { version = "0.2.4", features = ["async"] }
+toml = "0.7.2"
+tokio = { version = "1", features = ["full"] }
+log = "0.4"
+dirs = "4.0.0"
+serde = { version = "1.0", features = ["derive"] }
+simple_logger = "4.0.0"
+image = "0.24.5"
+async-trait = "0.1.66"
+futures-util = "0.3.27"
+lazy_static = "1.4.0"
+imageproc = "0.23.0"
+rusttype = "0.9.3"
