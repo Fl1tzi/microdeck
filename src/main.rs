@@ -2,16 +2,16 @@ use hidapi::HidApi;
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
 use simple_logger;
-use tokio::sync::mpsc::error::TrySendError;
 use std::collections::HashMap;
+use std::fs;
 use std::io::ErrorKind;
 use std::process::exit;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, path::PathBuf};
-use std::fs;
 use tokio::process::Command;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::Mutex;
 mod modules;
 use elgato_streamdeck as streamdeck;
@@ -42,7 +42,7 @@ pub struct Config {
 
 #[derive(Deserialize, Debug)]
 struct GlobalConfig {
-    default_font: Option<String>
+    default_font: Option<String>,
 }
 
 fn main() {
@@ -219,14 +219,16 @@ pub async fn device_key_listener(
                         ButtonStateUpdate::ButtonDown(i) => {
                             let options = skip_if_none!(keys.get(&i));
                             let actions = &options.1 .0;
-                            if send_key_event(options, actions, HostEvent::ButtonPressed).await == false {
+                            if send_key_event(options, actions, HostEvent::ButtonPressed).await
+                                == false
+                            {
                                 debug!("Removed key {} from listeners (receiver dropped)", &i);
                                 keys.remove(&i);
                             }
                         }
                         ButtonStateUpdate::ButtonUp(i) => {
                             let options = skip_if_none!(keys.get(&i));
-                            let actions = &options.1.1;
+                            let actions = &options.1 .1;
                             /* let sender = &options.0;
                             let on_release = &options.1 .1;
                             if let Some(actions) = on_release {
@@ -237,7 +239,9 @@ pub async fn device_key_listener(
                                     debug!("Removed key {} from listeners (does not respond)", &i);
                                 }
                             }*/
-                            if send_key_event(options, actions, HostEvent::ButtonReleased).await == false {
+                            if send_key_event(options, actions, HostEvent::ButtonReleased).await
+                                == false
+                            {
                                 debug!("Removed key {} from listeners (receiver dropped)", &i);
                                 keys.remove(&i);
                             }
@@ -254,7 +258,14 @@ pub async fn device_key_listener(
 
 /// manually sends the script event or try to send it to the module.
 /// Returns false if the receiver is dead and can therefore be removed.
-pub async fn send_key_event(options: &(mpsc::Sender<HostEvent>, (Option<Vec<String>>, Option<Vec<String>>)), actions: &Option<Vec<String>>, event: HostEvent) -> bool {
+pub async fn send_key_event(
+    options: &(
+        mpsc::Sender<HostEvent>,
+        (Option<Vec<String>>, Option<Vec<String>>),
+    ),
+    actions: &Option<Vec<String>>,
+    event: HostEvent,
+) -> bool {
     let sender = &options.0;
     if let Some(actions) = actions {
         execute_button_action(actions).await;
@@ -262,9 +273,7 @@ pub async fn send_key_event(options: &(mpsc::Sender<HostEvent>, (Option<Vec<Stri
         if let Err(e) = sender.try_send(event) {
             match e {
                 TrySendError::Full(_) => trace!("Buffer full: {:?}", e),
-                TrySendError::Closed(_) => {
-                    return false
-                }
+                TrySendError::Closed(_) => return false,
             }
         }
     }
