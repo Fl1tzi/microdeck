@@ -1,7 +1,4 @@
 use hidapi::HidApi;
-use streamdeck::StreamDeckError;
-use tokio::task::JoinHandle;
-use tracing::{debug, error, info, trace, warn};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
@@ -10,17 +7,20 @@ use std::process::exit;
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, path::PathBuf};
+use streamdeck::StreamDeckError;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info, trace, warn};
 mod modules;
 use elgato_streamdeck as streamdeck;
 use streamdeck::asynchronous::{AsyncStreamDeck, ButtonStateUpdate};
 
 use dirs::config_dir;
 
-use crate::modules::{start_module, HostEvent, retrieve_module_from_name};
+use crate::modules::{retrieve_module_from_name, start_module, HostEvent};
 
 /// The name of the folder which holds the config
 pub const CONFIG_FOLDER_NAME: &'static str = "dach-decker";
@@ -42,8 +42,7 @@ pub struct Config {
 }
 
 #[derive(Deserialize, Debug)]
-struct GlobalConfig {
-}
+struct GlobalConfig;
 
 fn main() {
     let subscriber = tracing_subscriber::fmt()
@@ -119,7 +118,7 @@ pub async fn send_to_channel(sender: mpsc::Sender<HostEvent>, event: HostEvent) 
     if let Err(e) = sender.try_send(event) {
         match e {
             TrySendError::Full(_) => trace!("Buffer full: {:?}", e),
-            TrySendError::Closed(_) => return false
+            TrySendError::Closed(_) => return false,
         }
     }
     true
@@ -128,15 +127,19 @@ pub async fn send_to_channel(sender: mpsc::Sender<HostEvent>, event: HostEvent) 
 pub struct DeviceManager {
     modules: HashMap<u8, (Button, JoinHandle<()>, mpsc::Sender<HostEvent>)>,
     device: Arc<AsyncStreamDeck>,
-    serial: String
+    serial: String,
 }
 
 impl DeviceManager {
-    async fn new(serial: String, device: Arc<AsyncStreamDeck>, modules: HashMap<u8, (Button, JoinHandle<()>, mpsc::Sender<HostEvent>)>) -> DeviceManager {
+    async fn new(
+        serial: String,
+        device: Arc<AsyncStreamDeck>,
+        modules: HashMap<u8, (Button, JoinHandle<()>, mpsc::Sender<HostEvent>)>,
+    ) -> DeviceManager {
         DeviceManager {
             modules,
             device,
-            serial
+            serial,
         }
     }
 
@@ -150,9 +153,7 @@ impl DeviceManager {
     }
     /// listener for button press changes on the device
     #[tracing::instrument(skip_all, fields(serial = self.serial))]
-    async fn key_listener(
-        self
-    ) {
+    async fn key_listener(self) {
         loop {
             match self.device.get_reader().read(7.0).await {
                 Ok(v) => {
@@ -164,7 +165,8 @@ impl DeviceManager {
                                 if let Some(on_click) = &options.0.on_click {
                                     execute_sh(on_click).await;
                                 } else {
-                                    send_to_channel(options.2.clone(), HostEvent::ButtonPressed).await;
+                                    send_to_channel(options.2.clone(), HostEvent::ButtonPressed)
+                                        .await;
                                 }
                             }
                             ButtonStateUpdate::ButtonUp(i) => {
@@ -172,22 +174,21 @@ impl DeviceManager {
                                 if let Some(on_release) = &options.0.on_release {
                                     execute_sh(on_release).await;
                                 } else {
-                                    send_to_channel(options.2.clone(), HostEvent::ButtonReleased).await;
+                                    send_to_channel(options.2.clone(), HostEvent::ButtonReleased)
+                                        .await;
                                 }
                             }
                         }
                     }
                 }
-                Err(e) => {
-                    match e {
-                        StreamDeckError::HidError(e) => {
-                            error!("Shutting down device because of: {e}");
-                            self.shutdown();
-                            break
-                        },
-                        _ => error!("{e}")
+                Err(e) => match e {
+                    StreamDeckError::HidError(e) => {
+                        error!("Shutting down device because of: {e}");
+                        self.shutdown();
+                        break;
                     }
-                }
+                    _ => error!("{e}"),
+                },
             }
         }
     }
@@ -214,10 +215,10 @@ async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::inf
                 Ok(deck) => {
                     info!("Successfully connected to {}", device.1);
                     deck
-                },
+                }
                 Err(e) => {
                     error!("Cannot connect to Deck {}: {}", device.1, e);
-                    continue 'outer
+                    continue 'outer;
                 }
             };
             // set brightness
@@ -248,14 +249,7 @@ async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::inf
                         start_module(ser, b, module, dev, rx).await;
                     });
 
-                    buttons_keys.insert(
-                        button.index,
-                        (
-                            button,
-                            handle,
-                            button_sender,
-                        ),
-                    );
+                    buttons_keys.insert(button.index, (button, handle, button_sender));
                 } else {
                     warn!("The module \"{}\" does not exist.", button.module)
                 }

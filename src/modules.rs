@@ -11,16 +11,14 @@ use async_trait::async_trait;
 pub use elgato_streamdeck as streamdeck;
 use futures_util::Future;
 use image::DynamicImage;
-use tracing::{error, info, debug};
-use streamdeck::info::Kind;
-use streamdeck::AsyncStreamDeck;
-use tokio::sync::mpsc;
-use tokio::sync::Mutex;
 use phf::phf_map;
 pub use streamdeck::info::ImageFormat;
+use streamdeck::info::Kind;
+use streamdeck::AsyncStreamDeck;
 pub use streamdeck::StreamDeckError;
-
-
+use tokio::sync::mpsc;
+use tokio::sync::Mutex;
+use tracing::{debug, error, info};
 
 /// Events that are coming from the host
 #[derive(Clone, Copy, Debug)]
@@ -39,9 +37,8 @@ type ModuleFunction = fn(DeviceAccess, ChannelReceiver, Button) -> ModuleFuture;
 pub fn retrieve_module_from_name(name: String) -> Option<ModuleFunction> {
     match name.as_str() {
         "counter" => Some(Counter::run),
-        _ => None
+        _ => None,
     }
-
 }
 
 /// starts a module
