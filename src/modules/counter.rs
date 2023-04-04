@@ -22,8 +22,6 @@ impl Module for Counter {
     ) -> Result<(), ReturnError> {
         let options = config.options.unwrap_or_default();
 
-        println!("{:#?}", options);
-
         let font_data: &[u8] = include_bytes!("../../fonts/SpaceGrotesk.ttf");
         let font: Font<'static> = Font::try_from_bytes(font_data).unwrap();
 
