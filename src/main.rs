@@ -251,8 +251,7 @@ async fn init_devices(
                 // if the index of the button is higher than the button count
                 if button_count < button.index {
                     warn!(
-                        "The button {} does not exist on Deck {}; skipping",
-                        button.index, device.1
+                        "This button does not exist on device",
                     );
                     continue 'device;
                 }
@@ -275,7 +274,7 @@ async fn init_devices(
             }
             device_managers.push(DeviceManager::new(device.1, deck, buttons_keys).await);
         } else {
-            info!("Deck {} is not configured; skipping", device.1);
+            info!("Deck is not configured");
         }
     }
     device_managers
