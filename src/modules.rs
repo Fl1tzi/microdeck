@@ -11,13 +11,13 @@ use async_trait::async_trait;
 pub use elgato_streamdeck as streamdeck;
 use futures_util::Future;
 use image::DynamicImage;
+use lazy_static::lazy_static;
 pub use streamdeck::info::ImageFormat;
 use streamdeck::info::Kind;
 use streamdeck::AsyncStreamDeck;
 pub use streamdeck::StreamDeckError;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use lazy_static::lazy_static;
 use tracing::{debug, error, info};
 
 lazy_static! {

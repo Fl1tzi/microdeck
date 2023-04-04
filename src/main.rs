@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, trace, warn, info_span, Level};
+use tracing::{debug, error, info, info_span, trace, warn, Level};
 mod modules;
 use elgato_streamdeck as streamdeck;
 use streamdeck::asynchronous::{AsyncStreamDeck, ButtonStateUpdate};
@@ -111,9 +111,7 @@ pub async fn start(config: Config, hid: HidApi, hw_devices: Vec<(streamdeck::inf
 
     // start listeners
     for device in devices {
-        handles.push(tokio::spawn(async move {
-            device.key_listener().await
-        }))
+        handles.push(tokio::spawn(async move { device.key_listener().await }))
     }
 
     loop {
@@ -205,7 +203,11 @@ impl DeviceManager {
 
 /// This is the entry point for the application. This will check all devices for their config,
 /// start the modules and the device button listeners.
-async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::info::Kind, String)>) -> Vec<DeviceManager> {
+async fn init_devices(
+    config: Config,
+    hid: HidApi,
+    devices: Vec<(streamdeck::info::Kind, String)>,
+) -> Vec<DeviceManager> {
     // check if configuration is correct for device
     if devices.len() == 0 {
         error!("There are no Decks connected");
@@ -241,10 +243,10 @@ async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::inf
             // save button senders
             let mut buttons_keys = HashMap::new();
             for button in device_conf.buttons.clone().into_iter() {
-                let _span_button = info_span!("button", index=button.index).entered();
+                let _span_button = info_span!("button", index = button.index).entered();
                 if buttons_keys.get(&button.index).is_some() {
                     warn!("The button is configured twice");
-                    continue
+                    continue;
                 }
                 // if the index of the button is higher than the button count
                 if button_count < button.index {
