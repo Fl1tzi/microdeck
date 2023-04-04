@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn, info_span, Level};
 mod modules;
 use elgato_streamdeck as streamdeck;
 use streamdeck::asynchronous::{AsyncStreamDeck, ButtonStateUpdate};
@@ -105,7 +105,16 @@ fn main() {
 }
 
 pub async fn start(config: Config, hid: HidApi, hw_devices: Vec<(streamdeck::info::Kind, String)>) {
-    init_devices(config, hid, hw_devices).await;
+    let devices = init_devices(config, hid, hw_devices).await;
+
+    let mut handles: Vec<JoinHandle<()>> = Vec::new();
+
+    // start listeners
+    for device in devices {
+        handles.push(tokio::spawn(async move {
+            device.key_listener().await
+        }))
+    }
 
     loop {
         tokio::time::sleep(Duration::from_secs(2000)).await;
@@ -124,6 +133,7 @@ pub async fn send_to_channel(sender: mpsc::Sender<HostEvent>, event: HostEvent) 
     true
 }
 
+/// Handles everything related to a single device
 pub struct DeviceManager {
     modules: HashMap<u8, (Button, JoinHandle<()>, mpsc::Sender<HostEvent>)>,
     device: Arc<AsyncStreamDeck>,
@@ -144,7 +154,6 @@ impl DeviceManager {
     }
 
     /// stops all modules of the device
-    #[tracing::instrument(skip_all, fields(serial = self.serial))]
     fn shutdown(self) {
         for (index, (_, handle, _)) in self.modules {
             trace!("Destroying module {}", index);
@@ -195,15 +204,17 @@ impl DeviceManager {
 }
 
 /// This is the entry point for the application. This will check all devices for their config,
-/// start the bridges and the device button listeners.
-async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::info::Kind, String)>) {
+/// start the modules and the device button listeners.
+async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::info::Kind, String)>) -> Vec<DeviceManager> {
     // check if configuration is correct for device
     if devices.len() == 0 {
         error!("There are no Decks connected");
         exit(1);
     }
     info!("There are {} Decks connected", devices.len());
-    'outer: for device in devices {
+    let mut device_managers = Vec::new();
+    'device: for device in devices {
+        let _span_device = info_span!("device", serial = device.1).entered();
         // no pedals are supported
         if !device.0.is_visual() {
             continue;
@@ -213,12 +224,12 @@ async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::inf
             // connect to deck or continue to next
             let deck = match AsyncStreamDeck::connect(&hid, device.0, &device.1) {
                 Ok(deck) => {
-                    info!("Successfully connected to {}", device.1);
+                    info!("Successfully connected");
                     deck
                 }
                 Err(e) => {
-                    error!("Cannot connect to Deck {}: {}", device.1, e);
-                    continue 'outer;
+                    error!("Cannot connect: {}", e);
+                    continue 'device;
                 }
             };
             // set brightness
@@ -227,15 +238,21 @@ async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::inf
             deck.reset().await.unwrap();
             // initialize buttons
             let button_count = device.0.key_count();
+            // save button senders
             let mut buttons_keys = HashMap::new();
             for button in device_conf.buttons.clone().into_iter() {
+                let _span_button = info_span!("button", index=button.index).entered();
+                if buttons_keys.get(&button.index).is_some() {
+                    warn!("The button is configured twice");
+                    continue
+                }
                 // if the index of the button is higher than the button count
                 if button_count < button.index {
                     warn!(
                         "The button {} does not exist on Deck {}; skipping",
                         button.index, device.1
                     );
-                    continue 'outer;
+                    continue 'device;
                 }
                 // create a channel for the module to receive device events
                 let (button_sender, button_receiver) = mpsc::channel(4);
@@ -254,15 +271,12 @@ async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::inf
                     warn!("The module \"{}\" does not exist.", button.module)
                 }
             }
-            let manager = DeviceManager::new(device.1, deck, buttons_keys).await;
-            // start the device key listener
-            tokio::spawn(async move {
-                manager.key_listener().await;
-            });
+            device_managers.push(DeviceManager::new(device.1, deck, buttons_keys).await);
         } else {
             info!("Deck {} is not configured; skipping", device.1);
         }
     }
+    device_managers
 }
 
 pub async fn execute_sh(command: &str) {

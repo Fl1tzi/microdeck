@@ -1,24 +1,32 @@
 mod blank;
 mod counter;
 
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::{error::Error, sync::Arc};
 
-use self::blank::Blank;
 use self::counter::Counter;
 use crate::Button;
 use async_trait::async_trait;
 pub use elgato_streamdeck as streamdeck;
 use futures_util::Future;
 use image::DynamicImage;
-use phf::phf_map;
 pub use streamdeck::info::ImageFormat;
 use streamdeck::info::Kind;
 use streamdeck::AsyncStreamDeck;
 pub use streamdeck::StreamDeckError;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use lazy_static::lazy_static;
 use tracing::{debug, error, info};
+
+lazy_static! {
+    static ref MODULE_MAP: HashMap<&'static str, ModuleFunction> = {
+        let mut m = HashMap::new();
+        m.insert("counter", Counter::run as ModuleFunction);
+        m
+    };
+}
 
 /// Events that are coming from the host
 #[derive(Clone, Copy, Debug)]
@@ -27,22 +35,17 @@ pub enum HostEvent {
     ButtonPressed,
     /// The button was released
     ButtonReleased,
-    /// The channel was initialized and there were no events yet
-    Init,
 }
 
 type ModuleFuture = Pin<Box<dyn Future<Output = Result<(), ReturnError>> + Send>>;
 type ModuleFunction = fn(DeviceAccess, ChannelReceiver, Button) -> ModuleFuture;
 
 pub fn retrieve_module_from_name(name: String) -> Option<ModuleFunction> {
-    match name.as_str() {
-        "counter" => Some(Counter::run),
-        _ => None,
-    }
+    MODULE_MAP.get(name.as_str()).copied()
 }
 
 /// starts a module
-#[tracing::instrument(skip_all, fields(device = serial, button = button.index, module = button.module))]
+#[tracing::instrument(name = "module", skip_all, fields(serial = serial, button = button.index, module = button.module))]
 pub async fn start_module(
     // Just for logging purpose
     serial: String,

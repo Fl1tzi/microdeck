@@ -1,6 +1,5 @@
 ```diff
 - WORK IN PROGRESS
-```
 
 # dach-decker
 
