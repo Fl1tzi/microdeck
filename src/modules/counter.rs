@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::Button;
 
 use super::Module;
@@ -16,8 +18,12 @@ impl Module for Counter {
     async fn run(
         streamdeck: DeviceAccess,
         button_receiver: ChannelReceiver,
-        _config: Button,
+        config: Button,
     ) -> Result<(), ReturnError> {
+        let options = config.options.unwrap_or_default();
+
+        println!("{:#?}", options);
+
         let font_data: &[u8] = include_bytes!("../../fonts/SpaceGrotesk.ttf");
         let font: Font<'static> = Font::try_from_bytes(font_data).unwrap();
 

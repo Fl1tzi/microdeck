@@ -1,6 +1,7 @@
 mod blank;
 mod counter;
 
+use std::pin::Pin;
 use std::{error::Error, sync::Arc};
 
 use self::blank::Blank;
@@ -8,14 +9,18 @@ use self::counter::Counter;
 use crate::Button;
 use async_trait::async_trait;
 pub use elgato_streamdeck as streamdeck;
+use futures_util::Future;
 use image::DynamicImage;
-use log::{error, info, trace};
-pub use streamdeck::info::ImageFormat;
+use tracing::{error, info, debug};
 use streamdeck::info::Kind;
 use streamdeck::AsyncStreamDeck;
-pub use streamdeck::StreamDeckError;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use phf::phf_map;
+pub use streamdeck::info::ImageFormat;
+pub use streamdeck::StreamDeckError;
+
+
 
 /// Events that are coming from the host
 #[derive(Clone, Copy, Debug)]
@@ -28,26 +33,34 @@ pub enum HostEvent {
     Init,
 }
 
+type ModuleFuture = Pin<Box<dyn Future<Output = Result<(), ReturnError>> + Send>>;
+type ModuleFunction = fn(DeviceAccess, ChannelReceiver, Button) -> ModuleFuture;
+
+pub fn retrieve_module_from_name(name: String) -> Option<ModuleFunction> {
+    match name.as_str() {
+        "counter" => Some(Counter::run),
+        _ => None
+    }
+
+}
+
 /// starts a module
+#[tracing::instrument(skip_all, fields(device = serial, button = button.index, module = button.module))]
 pub async fn start_module(
+    // Just for logging purpose
+    serial: String,
     button: Button,
+    module_function: ModuleFunction,
     device: Arc<AsyncStreamDeck>,
     br: Arc<Mutex<mpsc::Receiver<HostEvent>>>,
 ) {
-    trace!("Starting MODULE {}", button.index);
-    let b = button.clone();
+    debug!("STARTED");
     let da = DeviceAccess::new(device, button.index).await;
-    let module = match button.module.as_str() {
-        "counter" => Counter::run(da, br, b),
-        _ => {
-            error!("Module \'{}\' does not exist", button.module);
-            Blank::run(da, br, b)
-        }
-    };
 
-    match module.await {
-        Ok(_) => info!("MODULE {} closed", button.index),
-        Err(e) => error!("MODULE {}: {:?}", button.index, e),
+    // actually run the module
+    match module_function(da, br, button).await {
+        Ok(_) => info!("CLOSED"),
+        Err(e) => error!("ERR: {:?}", e),
     }
 }
 

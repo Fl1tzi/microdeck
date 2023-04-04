@@ -1,7 +1,8 @@
 use hidapi::HidApi;
-use log::{debug, error, info, trace, warn};
+use streamdeck::StreamDeckError;
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info, trace, warn};
 use serde::Deserialize;
-use simple_logger;
 use std::collections::HashMap;
 use std::fs;
 use std::io::ErrorKind;
@@ -19,7 +20,7 @@ use streamdeck::asynchronous::{AsyncStreamDeck, ButtonStateUpdate};
 
 use dirs::config_dir;
 
-use crate::modules::{start_module, HostEvent};
+use crate::modules::{start_module, HostEvent, retrieve_module_from_name};
 
 /// The name of the folder which holds the config
 pub const CONFIG_FOLDER_NAME: &'static str = "dach-decker";
@@ -42,11 +43,14 @@ pub struct Config {
 
 #[derive(Deserialize, Debug)]
 struct GlobalConfig {
-    default_font: Option<String>,
 }
 
 fn main() {
-    simple_logger::init_with_env().unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_target(false)
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).unwrap();
 
     let config_file: PathBuf = match env::var_os("DACH_DECKER_CONFIG") {
         Some(path) => PathBuf::from(path),
@@ -104,13 +108,88 @@ fn main() {
 pub async fn start(config: Config, hid: HidApi, hw_devices: Vec<(streamdeck::info::Kind, String)>) {
     init_devices(config, hid, hw_devices).await;
 
-    // TODO: PLEASE IMPROVE THIS!!
-    // Issue is that tokio sleeps are not kept running while they are sleeping which results in the
-    // program exiting...
-    //
-    // However, this will stay open even if the program is nothing doing anymore.
     loop {
         tokio::time::sleep(Duration::from_secs(2000)).await;
+    }
+}
+
+/// try to send an event to the module channel.
+/// If the module dropped the listener this will return false.
+pub async fn send_to_channel(sender: mpsc::Sender<HostEvent>, event: HostEvent) -> bool {
+    if let Err(e) = sender.try_send(event) {
+        match e {
+            TrySendError::Full(_) => trace!("Buffer full: {:?}", e),
+            TrySendError::Closed(_) => return false
+        }
+    }
+    true
+}
+
+pub struct DeviceManager {
+    modules: HashMap<u8, (Button, JoinHandle<()>, mpsc::Sender<HostEvent>)>,
+    device: Arc<AsyncStreamDeck>,
+    serial: String
+}
+
+impl DeviceManager {
+    async fn new(serial: String, device: Arc<AsyncStreamDeck>, modules: HashMap<u8, (Button, JoinHandle<()>, mpsc::Sender<HostEvent>)>) -> DeviceManager {
+        DeviceManager {
+            modules,
+            device,
+            serial
+        }
+    }
+
+    /// stops all modules of the device
+    #[tracing::instrument(skip_all, fields(serial = self.serial))]
+    fn shutdown(self) {
+        for (index, (_, handle, _)) in self.modules {
+            trace!("Destroying module {}", index);
+            handle.abort();
+        }
+    }
+    /// listener for button press changes on the device
+    #[tracing::instrument(skip_all, fields(serial = self.serial))]
+    async fn key_listener(
+        self
+    ) {
+        loop {
+            match self.device.get_reader().read(7.0).await {
+                Ok(v) => {
+                    trace!("{:?}", v);
+                    for update in v {
+                        match update {
+                            ButtonStateUpdate::ButtonDown(i) => {
+                                let options = skip_if_none!(self.modules.get(&i));
+                                if let Some(on_click) = &options.0.on_click {
+                                    execute_sh(on_click).await;
+                                } else {
+                                    send_to_channel(options.2.clone(), HostEvent::ButtonPressed).await;
+                                }
+                            }
+                            ButtonStateUpdate::ButtonUp(i) => {
+                                let options = skip_if_none!(self.modules.get(&i));
+                                if let Some(on_release) = &options.0.on_release {
+                                    execute_sh(on_release).await;
+                                } else {
+                                    send_to_channel(options.2.clone(), HostEvent::ButtonReleased).await;
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    match e {
+                        StreamDeckError::HidError(e) => {
+                            error!("Shutting down device because of: {e}");
+                            self.shutdown();
+                            break
+                        },
+                        _ => error!("{e}")
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -135,10 +214,10 @@ async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::inf
                 Ok(deck) => {
                     info!("Successfully connected to {}", device.1);
                     deck
-                }
+                },
                 Err(e) => {
-                    error!("Failed to connect to Deck {}:\n{}", device.1, e);
-                    continue 'outer;
+                    error!("Cannot connect to Deck {}: {}", device.1, e);
+                    continue 'outer
                 }
             };
             // set brightness
@@ -146,9 +225,8 @@ async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::inf
             // reset
             deck.reset().await.unwrap();
             // initialize buttons
-            // let mut bridges: Vec<Bridge> = Vec::new();
             let button_count = device.0.key_count();
-            let mut buttons_key = HashMap::new();
+            let mut buttons_keys = HashMap::new();
             for button in device_conf.buttons.clone().into_iter() {
                 // if the index of the button is higher than the button count
                 if button_count < button.index {
@@ -158,145 +236,38 @@ async fn init_devices(config: Config, hid: HidApi, devices: Vec<(streamdeck::inf
                     );
                     continue 'outer;
                 }
-                // check if the action has the correct syntax
-                for key in vec![&button.on_click, &button.on_release] {
-                    if let Some(a) = key {
-                        for action in a {
-                            if !action.starts_with("bash:") && !action.starts_with("sh:") {
-                                error!(
-                                    "Unknown action in button {} on Deck {}; skipping",
-                                    button.index, device.1
-                                );
-                                continue 'outer;
-                            }
-                        }
-                    }
-                }
-                // create a watch channel for the module to receive device events
+                // create a channel for the module to receive device events
                 let (button_sender, button_receiver) = mpsc::channel(4);
-                buttons_key.insert(
-                    button.index,
-                    (
-                        button_sender,
-                        (button.on_click.clone(), button.on_release.clone()),
-                    ),
-                );
                 // spawn the module
-                let b = button.clone();
-                let rx = Arc::new(Mutex::new(button_receiver));
-                let dev = deck.clone();
-                tokio::spawn(async move {
-                    start_module(b, dev, rx).await;
-                });
+                if let Some(module) = retrieve_module_from_name(button.module.clone()) {
+                    let b = button.clone();
+                    let rx = Arc::new(Mutex::new(button_receiver));
+                    let dev = deck.clone();
+                    let ser = device.1.clone();
+                    let handle = tokio::spawn(async move {
+                        start_module(ser, b, module, dev, rx).await;
+                    });
+
+                    buttons_keys.insert(
+                        button.index,
+                        (
+                            button,
+                            handle,
+                            button_sender,
+                        ),
+                    );
+                } else {
+                    warn!("The module \"{}\" does not exist.", button.module)
+                }
             }
+            let manager = DeviceManager::new(device.1, deck, buttons_keys).await;
             // start the device key listener
             tokio::spawn(async move {
-                device_key_listener(deck, buttons_key).await;
+                manager.key_listener().await;
             });
         } else {
             info!("Deck {} is not configured; skipping", device.1);
         }
-    }
-}
-
-/// listener for button press changes on the device. Also executes the scripts.
-pub async fn device_key_listener(
-    device: Arc<AsyncStreamDeck>,
-    mut keys: HashMap<
-        u8,
-        (
-            mpsc::Sender<HostEvent>,
-            (Option<Vec<String>>, Option<Vec<String>>),
-        ),
-    >,
-) {
-    loop {
-        match device.get_reader().read(7.0).await {
-            Ok(v) => {
-                trace!("Received Keypress: {:?}", v);
-                for update in v {
-                    match update {
-                        ButtonStateUpdate::ButtonDown(i) => {
-                            let options = skip_if_none!(keys.get(&i));
-                            let actions = &options.1 .0;
-                            if send_key_event(options, actions, HostEvent::ButtonPressed).await
-                                == false
-                            {
-                                debug!("Removed key {} from listeners (receiver dropped)", &i);
-                                keys.remove(&i);
-                            }
-                        }
-                        ButtonStateUpdate::ButtonUp(i) => {
-                            let options = skip_if_none!(keys.get(&i));
-                            let actions = &options.1 .1;
-                            /* let sender = &options.0;
-                            let on_release = &options.1 .1;
-                            if let Some(actions) = on_release {
-                                execute_button_action(actions).await;
-                            } else {
-                                if sender.try_send(HostEvent::ButtonReleased).is_err() {
-                                    keys.remove(&i);
-                                    debug!("Removed key {} from listeners (does not respond)", &i);
-                                }
-                            }*/
-                            if send_key_event(options, actions, HostEvent::ButtonReleased).await
-                                == false
-                            {
-                                debug!("Removed key {} from listeners (receiver dropped)", &i);
-                                keys.remove(&i);
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Error while retrieving key status: {:?}", e);
-            }
-        }
-    }
-}
-
-/// manually sends the script event or try to send it to the module.
-/// Returns false if the receiver is dead and can therefore be removed.
-pub async fn send_key_event(
-    options: &(
-        mpsc::Sender<HostEvent>,
-        (Option<Vec<String>>, Option<Vec<String>>),
-    ),
-    actions: &Option<Vec<String>>,
-    event: HostEvent,
-) -> bool {
-    let sender = &options.0;
-    if let Some(actions) = actions {
-        execute_button_action(actions).await;
-    } else {
-        if let Err(e) = sender.try_send(event) {
-            match e {
-                TrySendError::Full(_) => trace!("Buffer full: {:?}", e),
-                TrySendError::Closed(_) => return false,
-            }
-        }
-    }
-    true
-}
-
-/// executes a shell script
-pub async fn execute_button_action(actions: &Vec<String>) {
-    for a in actions {
-        if let Some(v) = a.strip_prefix("bash:") {
-            execute_bash(v).await;
-        } else if let Some(v) = a.strip_prefix("sh:") {
-            execute_sh(v).await;
-        } else {
-            unreachable!()
-        }
-    }
-}
-
-pub async fn execute_bash(command: &str) {
-    match Command::new("/bin/bash").arg(command).output().await {
-        Ok(o) => debug!("Command \'{}\' returned: {}", command, o.status),
-        Err(e) => error!("Command \'{}\' failed: {}", command, e),
     }
 }
 
@@ -329,7 +300,7 @@ pub struct Button {
     /// available options:
     /// - \"sh:date\" - executes in sh
     /// - \"bash:date\" - executes in bash
-    pub on_click: Option<Vec<String>>,
+    pub on_click: Option<String>,
     /// allows to overwrite what it will do on a release; Same options as [on_click]
-    pub on_release: Option<Vec<String>>,
+    pub on_release: Option<String>,
 }
