@@ -250,9 +250,7 @@ async fn init_devices(
                 }
                 // if the index of the button is higher than the button count
                 if button_count < button.index {
-                    warn!(
-                        "This button does not exist on device",
-                    );
+                    warn!("This button does not exist on device",);
                     continue 'device;
                 }
                 // create a channel for the module to receive device events
