@@ -1,38 +1,29 @@
+use deck_driver as streamdeck;
+use device::Device;
 use hidapi::HidApi;
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::fs;
-use std::io::ErrorKind;
-use std::process::exit;
-use std::sync::Arc;
-use std::time::Duration;
-use std::{env, path::PathBuf};
-use streamdeck::StreamDeckError;
-use tokio::process::Command;
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
-use tracing::{debug, error, info, info_span, trace, warn, Level};
-mod modules;
-use elgato_streamdeck as streamdeck;
-use streamdeck::asynchronous::{AsyncStreamDeck, ButtonStateUpdate};
+use std::{
+    collections::HashMap,
+    env,
+    fmt::{self, Display},
+    fs,
+    io::ErrorKind,
+    path::PathBuf,
+    process::exit,
+    time::Duration,
+};
+use tracing::{debug, error, info, warn};
+use tracing_subscriber::{
+    self, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
+};
 
 use dirs::config_dir;
 
-use crate::modules::{retrieve_module_from_name, start_module, HostEvent};
+mod device;
+mod modules;
 
 /// The name of the folder which holds the config
 pub const CONFIG_FOLDER_NAME: &'static str = "dach-decker";
-
-macro_rules! skip_if_none {
-    ($res:expr) => {
-        match $res {
-            Some(v) => v,
-            None => continue,
-        }
-    };
-}
 
 /// The config structure
 #[derive(Deserialize, Debug)]
@@ -45,11 +36,17 @@ pub struct Config {
 struct GlobalConfig;
 
 fn main() {
-    let subscriber = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_target(false)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).unwrap();
+    // ------ LOAD CONFIG
+
+    let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
+    let filter_layer = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .unwrap();
+
+    tracing_subscriber::registry()
+        .with(filter_layer)
+        .with(fmt_layer)
+        .init();
 
     let config_file: PathBuf = match env::var_os("DACH_DECKER_CONFIG") {
         Some(path) => PathBuf::from(path),
@@ -85,7 +82,9 @@ fn main() {
         }
     };
     debug!("{:#?}", config);
-    // hidapi
+
+    // ------ START APPLICATION
+
     let hid = match streamdeck::new_hidapi() {
         Ok(v) => v,
         Err(e) => {
@@ -93,195 +92,102 @@ fn main() {
             exit(1);
         }
     };
-    // list devices
-    // TODO: allow hotplug
-    let devices = streamdeck::list_devices(&hid);
     // lets start some async
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .unwrap()
-        .block_on(start(config, hid, devices))
+        .block_on(start(config, hid))
 }
 
-pub async fn start(config: Config, hid: HidApi, hw_devices: Vec<(streamdeck::info::Kind, String)>) {
-    let devices = init_devices(config, hid, hw_devices).await;
+pub async fn start(config: Config, mut hid: HidApi) {
+    let mut devices: HashMap<String, Device> = HashMap::new();
 
-    let mut handles: Vec<JoinHandle<()>> = Vec::new();
-
-    // start listeners
-    for device in devices {
-        handles.push(tokio::spawn(async move { device.key_listener().await }))
-    }
+    // devices which are not configured anyways
+    let mut ignore_devices: Vec<String> = Vec::new();
 
     loop {
-        tokio::time::sleep(Duration::from_secs(2000)).await;
-    }
-}
-
-/// try to send an event to the module channel.
-/// If the module dropped the listener this will return false.
-pub async fn send_to_channel(sender: mpsc::Sender<HostEvent>, event: HostEvent) -> bool {
-    if let Err(e) = sender.try_send(event) {
-        match e {
-            TrySendError::Full(_) => trace!("Buffer full: {:?}", e),
-            TrySendError::Closed(_) => return false,
-        }
-    }
-    true
-}
-
-/// Handles everything related to a single device
-pub struct DeviceManager {
-    modules: HashMap<u8, (Button, JoinHandle<()>, mpsc::Sender<HostEvent>)>,
-    device: Arc<AsyncStreamDeck>,
-    serial: String,
-}
-
-impl DeviceManager {
-    async fn new(
-        serial: String,
-        device: Arc<AsyncStreamDeck>,
-        modules: HashMap<u8, (Button, JoinHandle<()>, mpsc::Sender<HostEvent>)>,
-    ) -> DeviceManager {
-        DeviceManager {
-            modules,
-            device,
-            serial,
-        }
-    }
-
-    /// stops all modules of the device
-    fn shutdown(self) {
-        for (index, (_, handle, _)) in self.modules {
-            trace!("Destroying module {}", index);
-            handle.abort();
-        }
-    }
-    /// listener for button press changes on the device
-    #[tracing::instrument(skip_all, fields(serial = self.serial))]
-    async fn key_listener(self) {
-        loop {
-            match self.device.get_reader().read(7.0).await {
-                Ok(v) => {
-                    trace!("{:?}", v);
-                    for update in v {
-                        match update {
-                            ButtonStateUpdate::ButtonDown(i) => {
-                                let options = skip_if_none!(self.modules.get(&i));
-                                if let Some(on_click) = &options.0.on_click {
-                                    execute_sh(on_click).await;
-                                } else {
-                                    send_to_channel(options.2.clone(), HostEvent::ButtonPressed)
-                                        .await;
-                                }
-                            }
-                            ButtonStateUpdate::ButtonUp(i) => {
-                                let options = skip_if_none!(self.modules.get(&i));
-                                if let Some(on_release) = &options.0.on_release {
-                                    execute_sh(on_release).await;
-                                } else {
-                                    send_to_channel(options.2.clone(), HostEvent::ButtonReleased)
-                                        .await;
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => match e {
-                    StreamDeckError::HidError(e) => {
-                        error!("Shutting down device because of: {e}");
-                        self.shutdown();
-                        break;
-                    }
-                    _ => error!("{e}"),
-                },
+        // check for devices that can be removed
+        let mut removable_devices = Vec::new();
+        for (key, device) in &devices {
+            if device.is_dropped() {
+                removable_devices.push(key.to_owned());
             }
         }
-    }
-}
-
-/// This is the entry point for the application. This will check all devices for their config,
-/// start the modules and the device button listeners.
-async fn init_devices(
-    config: Config,
-    hid: HidApi,
-    devices: Vec<(streamdeck::info::Kind, String)>,
-) -> Vec<DeviceManager> {
-    // check if configuration is correct for device
-    if devices.len() == 0 {
-        error!("There are no Decks connected");
-        exit(1);
-    }
-    info!("There are {} Decks connected", devices.len());
-    let mut device_managers = Vec::new();
-    'device: for device in devices {
-        let _span_device = info_span!("device", serial = device.1).entered();
-        // no pedals are supported
-        if !device.0.is_visual() {
-            continue;
+        for d in removable_devices {
+            devices.remove(&d);
         }
-        // device.1 is the serial number
-        if let Some(device_conf) = config.device.iter().find(|s| s.serial == device.1) {
-            // connect to deck or continue to next
-            let deck = match AsyncStreamDeck::connect(&hid, device.0, &device.1) {
-                Ok(deck) => {
-                    info!("Successfully connected");
-                    deck
-                }
-                Err(e) => {
-                    error!("Cannot connect: {}", e);
-                    continue 'device;
-                }
-            };
-            // set brightness
-            deck.set_brightness(device_conf.brightness).await.unwrap();
-            // reset
-            deck.reset().await.unwrap();
-            // initialize buttons
-            let button_count = device.0.key_count();
-            // save button senders
-            let mut buttons_keys = HashMap::new();
-            for button in device_conf.buttons.clone().into_iter() {
-                let _span_button = info_span!("button", index = button.index).entered();
-                if buttons_keys.get(&button.index).is_some() {
-                    warn!("The button is configured twice");
-                    continue;
-                }
-                // if the index of the button is higher than the button count
-                if button_count < button.index {
-                    warn!("This button does not exist on device",);
-                    continue;
-                }
-                // create a channel for the module to receive device events
-                let (button_sender, button_receiver) = mpsc::channel(4);
-                // spawn the module
-                if let Some(module) = retrieve_module_from_name(button.module.clone()) {
-                    let b = button.clone();
-                    let rx = Arc::new(Mutex::new(button_receiver));
-                    let dev = deck.clone();
-                    let ser = device.1.clone();
-                    let handle = tokio::spawn(async move {
-                        start_module(ser, b, module, dev, rx).await;
-                    });
 
-                    buttons_keys.insert(button.index, (button, handle, button_sender));
-                } else {
-                    warn!("The module \"{}\" does not exist.", button.module)
-                }
-            }
-            device_managers.push(DeviceManager::new(device.1, deck, buttons_keys).await);
+        // refresh device list
+        if let Err(e) = streamdeck::refresh_device_list(&mut hid) {
+            warn!("Cannot fetch new devices: {}", e);
         } else {
-            info!("Deck is not configured");
+            for hw_device in streamdeck::list_devices(&hid) {
+                // if the device is not ignored and device is not already started
+                if !ignore_devices.contains(&hw_device.1) && devices.get(&hw_device.1).is_none() {
+                    debug!("New device detected: {}", &hw_device.1);
+                    if let Some(device_config) =
+                        config.device.iter().find(|d| d.serial == hw_device.1)
+                    {
+                        // start the device and its listener
+                        if let Some(mut device) = start_device(hw_device, &hid, device_config).await
+                        {
+                            device.key_listener().await;
+                            devices.insert(device.serial(), device);
+                        }
+                    } else {
+                        info!("The device {} is not configured.", hw_device.1);
+                        ignore_devices.push(hw_device.1);
+                    }
+                }
+            }
         }
+
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
-    device_managers
 }
 
-pub async fn execute_sh(command: &str) {
-    match Command::new("sh").arg(command).output().await {
-        Ok(o) => debug!("Command \'{}\' returned: {}", command, o.status),
-        Err(e) => error!("Command \'{}\' failed: {}", command, e),
+#[tracing::instrument(name = "device", skip_all, fields(serial = device.1))]
+pub async fn start_device(
+    device: (streamdeck::info::Kind, String),
+    hid: &HidApi,
+    device_config: &DeviceConfig,
+) -> Option<Device> {
+    match Device::new(device.1, device.0, device_config, &hid).await {
+        Ok(mut d) => {
+            info!("Connected");
+            // start all modules
+            for button in device_config.buttons.iter() {
+                if let Err(e) = d.start_button(&button) {
+                    error!("{}", e)
+                }
+            }
+            Some(d)
+        }
+        Err(e) => {
+            error!("Unable to connect: {}", e);
+            None
+        }
+    }
+}
+
+pub enum ConfigError {
+    ButtonDoesNotExist(u8),
+    ModuleDoesNotExist(u8, String),
+}
+
+impl Display for ConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ConfigError::ButtonDoesNotExist(index) => {
+                write!(formatter, "Button {}: does not exist.", index)
+            }
+            ConfigError::ModuleDoesNotExist(index, module) => write!(
+                formatter,
+                "Button {}: The module \"{}\" does not exist.",
+                index, module
+            ),
+        }
     }
 }
 

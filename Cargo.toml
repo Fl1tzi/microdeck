@@ -6,7 +6,7 @@ license = "MIT"
 
 [dependencies]
 hidapi = "2.2.0"
-elgato-streamdeck = { version = "0.2.4", features = ["async"] }
+deck-driver = { git = "https://codeberg.org/Fl1tzi/deck-driver.git", branch = "main", features = ["async"] }
 toml = "0.7.2"
 tokio = { version = "1", features = ["full"] }
 log = "0.4"

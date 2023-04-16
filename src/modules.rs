@@ -1,17 +1,16 @@
 mod blank;
 mod counter;
 
-use std::collections::HashMap;
-use std::pin::Pin;
-use std::{error::Error, sync::Arc};
-
 use self::counter::Counter;
 use crate::Button;
 use async_trait::async_trait;
-pub use elgato_streamdeck as streamdeck;
+pub use deck_driver as streamdeck;
 use futures_util::Future;
 use image::DynamicImage;
 use lazy_static::lazy_static;
+use std::collections::HashMap;
+use std::pin::Pin;
+use std::{error::Error, sync::Arc};
 pub use streamdeck::info::ImageFormat;
 use streamdeck::info::Kind;
 use streamdeck::AsyncStreamDeck;
@@ -37,8 +36,8 @@ pub enum HostEvent {
     ButtonReleased,
 }
 
-type ModuleFuture = Pin<Box<dyn Future<Output = Result<(), ReturnError>> + Send>>;
-type ModuleFunction = fn(DeviceAccess, ChannelReceiver, Button) -> ModuleFuture;
+pub type ModuleFuture = Pin<Box<dyn Future<Output = Result<(), ReturnError>> + Send>>;
+pub type ModuleFunction = fn(DeviceAccess, ChannelReceiver, Button) -> ModuleFuture;
 
 pub fn retrieve_module_from_name(name: String) -> Option<ModuleFunction> {
     MODULE_MAP.get(name.as_str()).copied()
@@ -81,17 +80,17 @@ impl DeviceAccess {
         }
     }
 
-    /// write a raw image to the Deck
+    /// write a raw image to the Deck.
     pub async fn write_raw_img(&self, img: &[u8]) -> Result<(), StreamDeckError> {
         self.streamdeck.write_image(self.index, img).await
     }
 
-    /// Write an image to the Deck
+    /// Write an image to the Deck.
     pub async fn write_img(&self, img: DynamicImage) -> Result<(), StreamDeckError> {
         self.streamdeck.set_button_image(self.index, img).await
     }
 
-    /// reset the image
+    /// reset the image.
     pub async fn clear_img(&self) -> Result<(), StreamDeckError> {
         self.streamdeck.clear_button_image(self.index).await
     }
@@ -100,7 +99,7 @@ impl DeviceAccess {
         self.kind.key_image_format()
     }
 
-    /// The resolution of the image on the Deck
+    /// The resolution of the image on the Deck.
     pub fn resolution(&self) -> (usize, usize) {
         self.format().size
     }
