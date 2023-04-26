@@ -6,8 +6,8 @@ lang: en-us
 - WORK IN PROGRESS
 ```
 
+This is a long term project. See [v0.1](https://codeberg.org/Fl1tzi/dach-decker/milestone/3854) for things that I require for the first version to be released.
+
 # dach-decker
 
-Dach-Decker or Dachdecker (eng. roofer) is a software to configure your Stream Deck on Linux with an easy-to-use configuration file.
-
-The software is designed so that developers could easily commit their own modules, so this application can receive extensive support without compromising ease of use.
+Dach-Decker or Dachdecker (eng. roofer) is a software to configure a Stream Deck with efficient modules and a friendly configuration file.
