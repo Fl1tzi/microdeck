@@ -33,6 +33,8 @@ macro_rules! skip_if_none {
     };
 }
 
+pub type ModuleController = (Button, JoinHandle<()>, mpsc::Sender<HostEvent>);
+
 pub enum DeviceError {
     DriverError(StreamDeckError),
     Config(ConfigError),
@@ -49,8 +51,7 @@ impl Display for DeviceError {
 
 /// Handles everything related to a single device
 pub struct Device {
-    // use this in favor of DeviceConfig
-    modules: HashMap<u8, (Button, JoinHandle<()>, mpsc::Sender<HostEvent>)>,
+    modules: HashMap<u8, ModuleController>,
     device: Arc<AsyncStreamDeck>,
     is_dropped: bool,
     serial: String,
@@ -93,7 +94,7 @@ impl Device {
         })
     }
 
-    pub fn start_button(&mut self, btn: &Button) -> Result<(), DeviceError> {
+    pub fn create_module(&mut self, btn: &Button) -> Result<(), DeviceError> {
         let (button_sender, button_receiver) = mpsc::channel(4);
         if let Some(module) = retrieve_module_from_name(btn.module.clone()) {
             let b = btn.clone();
@@ -132,6 +133,10 @@ impl Device {
 
     pub fn is_dropped(&self) -> bool {
         self.is_dropped
+    }
+
+    pub fn has_modules(&self) -> bool {
+        !self.modules.is_empty()
     }
 
     /// listener for button press changes on the device

@@ -1,5 +1,5 @@
 use deck_driver as streamdeck;
-use device::Device;
+use device::{Device, DeviceError};
 use hidapi::HidApi;
 use serde::Deserialize;
 use std::{
@@ -36,8 +36,6 @@ pub struct Config {
 struct GlobalConfig;
 
 fn main() {
-    // ------ LOAD CONFIG
-
     let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
     let filter_layer = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new("info"))
@@ -47,6 +45,8 @@ fn main() {
         .with(filter_layer)
         .with(fmt_layer)
         .init();
+
+    // ------ LOAD CONFIG
 
     let config_file: PathBuf = match env::var_os("DACH_DECKER_CONFIG") {
         Some(path) => PathBuf::from(path),
@@ -130,9 +130,8 @@ pub async fn start(config: Config, mut hid: HidApi) {
                         config.device.iter().find(|d| d.serial == hw_device.1)
                     {
                         // start the device and its listener
-                        if let Some(mut device) = start_device(hw_device, &hid, device_config).await
+                        if let Some(device) = start_device(hw_device, &hid, device_config).await
                         {
-                            device.key_listener().await;
                             devices.insert(device.serial(), device);
                         }
                     } else {
@@ -147,6 +146,7 @@ pub async fn start(config: Config, mut hid: HidApi) {
     }
 }
 
+/// Start a device by initially creating the [Device] and then starting all modules and listeners for that device
 #[tracing::instrument(name = "device", skip_all, fields(serial = device.1))]
 pub async fn start_device(
     device: (streamdeck::info::Kind, String),
@@ -154,15 +154,18 @@ pub async fn start_device(
     device_config: &DeviceConfig,
 ) -> Option<Device> {
     match Device::new(device.1, device.0, device_config, &hid).await {
-        Ok(mut d) => {
+        Ok(mut device) => {
             info!("Connected");
-            // start all modules
-            for button in device_config.buttons.iter() {
-                if let Err(e) = d.start_button(&button) {
-                    error!("{}", e)
-                }
+            // start all modules or print out the error
+            device_config.buttons.iter().for_each(|button| {
+                device
+                    .create_module(&button)
+                    .unwrap_or_else(|e| error!("{}", e))
+            });
+            if !device.has_modules() {
+                warn!("All modules have failed to start");
             }
-            Some(d)
+            Some(device)
         }
         Err(e) => {
             error!("Unable to connect: {}", e);
@@ -209,10 +212,7 @@ pub struct Button {
     module: String,
     /// options which get passed to the module
     options: Option<HashMap<String, String>>,
-    /// allows to overwrite what it will do on a click
-    /// available options:
-    /// - \"sh:date\" - executes in sh
-    /// - \"bash:date\" - executes in bash
+    /// allows to overwrite what it will do on a click (executes in /bin/sh)
     pub on_click: Option<String>,
     /// allows to overwrite what it will do on a release; Same options as [on_click]
     pub on_release: Option<String>,
