@@ -1,5 +1,5 @@
 use deck_driver as streamdeck;
-use device::{Device, DeviceError};
+use device::Device;
 use hidapi::HidApi;
 use serde::Deserialize;
 use std::{
@@ -11,6 +11,7 @@ use std::{
     path::PathBuf,
     process::exit,
     time::Duration,
+    sync::Arc
 };
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
@@ -23,7 +24,27 @@ mod device;
 mod modules;
 
 /// The name of the folder which holds the config
-pub const CONFIG_FOLDER_NAME: &'static str = "dach-decker";
+pub const CONFIG_FOLDER_NAME: &'static str = "virtual-deck";
+
+#[macro_export]
+macro_rules! skip_if_none {
+    ($res:expr) => {
+        match $res {
+            Some(v) => v,
+            None => continue,
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! unwrap_or_error {
+    ($res:expr) => {
+        match $res {
+            Ok(v) => v,
+            Err(e) => error!("{}", e)
+        }
+    };
+}
 
 /// The config structure
 #[derive(Deserialize, Debug)]
@@ -83,15 +104,7 @@ fn main() {
     };
     debug!("{:#?}", config);
 
-    // ------ START APPLICATION
-
-    let hid = match streamdeck::new_hidapi() {
-        Ok(v) => v,
-        Err(e) => {
-            error!("HidApi Error:\n{}", e);
-            exit(1);
-        }
-    };
+    let hid = streamdeck::new_hidapi().expect("Could not create HidApi");
     // lets start some async
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -130,7 +143,7 @@ pub async fn start(config: Config, mut hid: HidApi) {
                         config.device.iter().find(|d| d.serial == hw_device.1)
                     {
                         // start the device and its listener
-                        if let Some(device) = start_device(hw_device, &hid, device_config).await
+                        if let Some(device) = start_device(hw_device, &hid, device_config.clone()).await
                         {
                             devices.insert(device.serial(), device);
                         }
@@ -151,17 +164,19 @@ pub async fn start(config: Config, mut hid: HidApi) {
 pub async fn start_device(
     device: (streamdeck::info::Kind, String),
     hid: &HidApi,
-    device_config: &DeviceConfig,
+    device_config: DeviceConfig,
 ) -> Option<Device> {
     match Device::new(device.1, device.0, device_config, &hid).await {
         Ok(mut device) => {
             info!("Connected");
             // start all modules or print out the error
-            device_config.buttons.iter().for_each(|button| {
+            /* device_config.buttons.iter().for_each(|button| {
                 device
                     .create_module(&button)
                     .unwrap_or_else(|e| error!("{}", e))
-            });
+            });*/
+            device.init_modules().await;
+            device.key_listener().await;
             if !device.has_modules() {
                 warn!("All modules have failed to start");
             }
@@ -199,7 +214,7 @@ pub struct DeviceConfig {
     pub serial: String,
     #[serde(default = "default_brightness")]
     pub brightness: u8,
-    pub buttons: Vec<Button>,
+    pub buttons: Vec<Arc<Button>>,
 }
 
 fn default_brightness() -> u8 {

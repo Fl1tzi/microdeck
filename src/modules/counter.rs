@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::Button;
 
@@ -18,20 +18,18 @@ impl Module for Counter {
     async fn run(
         streamdeck: DeviceAccess,
         button_receiver: ChannelReceiver,
-        config: Button,
+        _config: Arc<Button>,
     ) -> Result<(), ReturnError> {
-        let options = config.options.unwrap_or_default();
+        let mut button_receiver = button_receiver.into_inner();
 
         let font_data: &[u8] = include_bytes!("../../fonts/SpaceGrotesk.ttf");
         let font: Font<'static> = Font::try_from_bytes(font_data).unwrap();
 
         let (h, w) = streamdeck.resolution();
 
-        let mut stream = button_receiver.lock().await;
-
         let mut counter: u32 = 0;
         loop {
-            if let Some(event) = stream.recv().await {
+            if let Some(event) = button_receiver.recv().await {
                 match event {
                     HostEvent::ButtonPressed => {
                         counter += 1;

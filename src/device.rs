@@ -1,13 +1,14 @@
 use crate::{
     modules::{retrieve_module_from_name, start_module, HostEvent},
     Button, ConfigError, DeviceConfig,
+    skip_if_none, unwrap_or_error
 };
 use deck_driver as streamdeck;
 use hidapi::HidApi;
 use std::{
     collections::HashMap,
-    fmt::{self, Display},
-    sync::Arc,
+    fmt::Display,
+    sync::Arc, cell::Cell,
 };
 use streamdeck::{
     asynchronous::{AsyncStreamDeck, ButtonStateUpdate},
@@ -16,24 +17,12 @@ use streamdeck::{
 };
 use tokio::{
     process::Command,
-    sync::{
-        mpsc::{self, error::TrySendError},
-        Mutex,
-    },
-    task::JoinHandle,
+    sync::mpsc::{self, error::TrySendError},
+    runtime::Runtime,
 };
 use tracing::{debug, error, info_span, trace};
 
-macro_rules! skip_if_none {
-    ($res:expr) => {
-        match $res {
-            Some(v) => v,
-            None => continue,
-        }
-    };
-}
-
-pub type ModuleController = (Button, JoinHandle<()>, mpsc::Sender<HostEvent>);
+pub type ModuleController = (Arc<Button>, mpsc::Sender<HostEvent>);
 
 pub enum DeviceError {
     DriverError(StreamDeckError),
@@ -53,7 +42,8 @@ impl Display for DeviceError {
 pub struct Device {
     modules: HashMap<u8, ModuleController>,
     device: Arc<AsyncStreamDeck>,
-    is_dropped: bool,
+    modules_runtime: Option<Runtime>,
+    config: DeviceConfig,
     serial: String,
 }
 
@@ -61,7 +51,7 @@ impl Device {
     pub async fn new(
         serial: String,
         kind: Kind,
-        device_conf: &DeviceConfig,
+        device_conf: DeviceConfig,
         hid: &HidApi,
     ) -> Result<Device, DeviceError> {
         // connect to deck or continue to next
@@ -89,23 +79,38 @@ impl Device {
         Ok(Device {
             modules: HashMap::new(),
             device: deck,
-            is_dropped: false,
+            modules_runtime: None,
+            config: device_conf,
             serial,
         })
     }
 
-    pub fn create_module(&mut self, btn: &Button) -> Result<(), DeviceError> {
+    pub async fn init_modules(&mut self) {
+        if self.modules_runtime.is_none() {
+            self.modules_runtime = Some(Runtime::new().unwrap());
+        }
+        for i in 0..self.config.buttons.len() {
+            let button = self.config.buttons.get(i).unwrap().to_owned();
+            unwrap_or_error!(self._create_module(button).await);
+        }
+        
+    }
+
+    async fn _create_module(&mut self, btn: Arc<Button>) -> Result<(), DeviceError> {
+        let runtime = self.modules_runtime.as_ref().expect("Runtime has to be created before module can be spawned");
         let (button_sender, button_receiver) = mpsc::channel(4);
-        if let Some(module) = retrieve_module_from_name(btn.module.clone()) {
-            let b = btn.clone();
-            let ser = self.serial.clone();
-            let rx = Arc::new(Mutex::new(button_receiver));
-            let dev = self.device.clone();
-            let handle = tokio::spawn(async move {
-                start_module(ser, b, module, dev, rx).await;
-            });
+        if let Some(module) = retrieve_module_from_name(&btn.module) {
+            {
+                let ser = self.serial.clone();
+                let dev = self.device.clone();
+                let b = btn.clone();
+
+                runtime.spawn(async move {
+                    start_module(ser, b, module, dev, Cell::new(button_receiver)).await
+                });
+            }
             self.modules
-                .insert(btn.index, (btn.clone(), handle, button_sender));
+                .insert(btn.index, (btn.clone(), button_sender));
             return Ok(());
         } else {
             return Err(DeviceError::Config(ConfigError::ModuleDoesNotExist(
@@ -119,20 +124,14 @@ impl Device {
         self.serial.clone()
     }
 
-    /// stops all modules of the device
-    fn stop_all_modules(&self) {
-        for (index, (_, handle, _)) in self.modules.iter() {
-            trace!("Destroying module {}", index);
-            handle.abort();
+    fn drop(&mut self) {
+        if let Some(handle) = self.modules_runtime.take() {
+            handle.shutdown_background();
         }
     }
 
-    fn drop(&mut self) {
-        self.is_dropped = true
-    }
-
     pub fn is_dropped(&self) -> bool {
-        self.is_dropped
+        self.modules_runtime.is_none()
     }
 
     pub fn has_modules(&self) -> bool {
@@ -153,7 +152,7 @@ impl Device {
                                 if let Some(on_click) = &options.0.on_click {
                                     execute_sh(on_click).await;
                                 } else {
-                                    send_to_channel(&options.2, HostEvent::ButtonPressed).await;
+                                    send_to_channel(&options.1, HostEvent::ButtonPressed).await;
                                 }
                             }
                             ButtonStateUpdate::ButtonUp(i) => {
@@ -161,7 +160,7 @@ impl Device {
                                 if let Some(on_release) = &options.0.on_release {
                                     execute_sh(on_release).await;
                                 } else {
-                                    send_to_channel(&options.2, HostEvent::ButtonReleased).await;
+                                    send_to_channel(&options.1, HostEvent::ButtonReleased).await;
                                 }
                             }
                         }
@@ -170,7 +169,6 @@ impl Device {
                 Err(e) => match e {
                     StreamDeckError::HidError(e) => {
                         error!("Shutting down device because of: {e}");
-                        self.stop_all_modules();
                         self.drop();
                         break;
                     }

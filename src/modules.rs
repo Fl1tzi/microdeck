@@ -8,6 +8,7 @@ pub use deck_driver as streamdeck;
 use futures_util::Future;
 use image::DynamicImage;
 use lazy_static::lazy_static;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::{error::Error, sync::Arc};
@@ -16,7 +17,6 @@ use streamdeck::info::Kind;
 use streamdeck::AsyncStreamDeck;
 pub use streamdeck::StreamDeckError;
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
 lazy_static! {
@@ -37,9 +37,9 @@ pub enum HostEvent {
 }
 
 pub type ModuleFuture = Pin<Box<dyn Future<Output = Result<(), ReturnError>> + Send>>;
-pub type ModuleFunction = fn(DeviceAccess, ChannelReceiver, Button) -> ModuleFuture;
+pub type ModuleFunction = fn(DeviceAccess, ChannelReceiver, Arc<Button>) -> ModuleFuture;
 
-pub fn retrieve_module_from_name(name: String) -> Option<ModuleFunction> {
+pub fn retrieve_module_from_name(name: &String) -> Option<ModuleFunction> {
     MODULE_MAP.get(name.as_str()).copied()
 }
 
@@ -48,10 +48,10 @@ pub fn retrieve_module_from_name(name: String) -> Option<ModuleFunction> {
 pub async fn start_module(
     // Just for logging purpose
     serial: String,
-    button: Button,
+    button: Arc<Button>,
     module_function: ModuleFunction,
     device: Arc<AsyncStreamDeck>,
-    br: Arc<Mutex<mpsc::Receiver<HostEvent>>>,
+    br: Cell<mpsc::Receiver<HostEvent>>
 ) {
     debug!("STARTED");
     let da = DeviceAccess::new(device, button.index).await;
@@ -110,13 +110,13 @@ impl DeviceAccess {
 }
 
 pub type ReturnError = Box<dyn Error + Send + Sync>;
-pub type ChannelReceiver = Arc<Mutex<mpsc::Receiver<HostEvent>>>;
+pub type ChannelReceiver = Cell<mpsc::Receiver<HostEvent>>;
 
 #[async_trait]
 pub trait Module {
     async fn run(
         device: DeviceAccess,
-        button_receiver: ChannelReceiver,
-        config: Button,
+        receiver: ChannelReceiver,
+        config: Arc<Button>,
     ) -> Result<(), ReturnError>;
 }
