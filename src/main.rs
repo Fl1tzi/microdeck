@@ -10,8 +10,8 @@ use std::{
     io::ErrorKind,
     path::PathBuf,
     process::exit,
+    sync::Arc,
     time::Duration,
-    sync::Arc
 };
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
@@ -41,7 +41,7 @@ macro_rules! unwrap_or_error {
     ($res:expr) => {
         match $res {
             Ok(v) => v,
-            Err(e) => error!("{}", e)
+            Err(e) => error!("{}", e),
         }
     };
 }
@@ -143,7 +143,8 @@ pub async fn start(config: Config, mut hid: HidApi) {
                         config.device.iter().find(|d| d.serial == hw_device.1)
                     {
                         // start the device and its listener
-                        if let Some(device) = start_device(hw_device, &hid, device_config.clone()).await
+                        if let Some(device) =
+                            start_device(hw_device, &hid, device_config.clone()).await
                         {
                             devices.insert(device.serial(), device);
                         }

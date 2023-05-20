@@ -1,15 +1,10 @@
 use crate::{
     modules::{retrieve_module_from_name, start_module, HostEvent},
-    Button, ConfigError, DeviceConfig,
-    skip_if_none, unwrap_or_error
+    skip_if_none, unwrap_or_error, Button, ConfigError, DeviceConfig,
 };
 use deck_driver as streamdeck;
 use hidapi::HidApi;
-use std::{
-    collections::HashMap,
-    fmt::Display,
-    sync::Arc,
-};
+use std::{collections::HashMap, fmt::Display, sync::Arc};
 use streamdeck::{
     asynchronous::{AsyncStreamDeck, ButtonStateUpdate},
     info::Kind,
@@ -17,8 +12,8 @@ use streamdeck::{
 };
 use tokio::{
     process::Command,
-    sync::mpsc::{self, error::TrySendError},
     runtime::Runtime,
+    sync::mpsc::{self, error::TrySendError},
 };
 use tracing::{debug, error, info_span, trace};
 
@@ -93,11 +88,13 @@ impl Device {
             let button = self.config.buttons.get(i).unwrap().to_owned();
             unwrap_or_error!(self._create_module(button).await);
         }
-        
     }
 
     async fn _create_module(&mut self, btn: Arc<Button>) -> Result<(), DeviceError> {
-        let runtime = self.modules_runtime.as_ref().expect("Runtime has to be created before module can be spawned");
+        let runtime = self
+            .modules_runtime
+            .as_ref()
+            .expect("Runtime has to be created before module can be spawned");
         let (button_sender, button_receiver) = mpsc::channel(4);
         if let Some(module) = retrieve_module_from_name(&btn.module) {
             {
@@ -109,8 +106,7 @@ impl Device {
                     start_module(ser, b, module, dev, Box::new(button_receiver)).await
                 });
             }
-            self.modules
-                .insert(btn.index, (btn.clone(), button_sender));
+            self.modules.insert(btn.index, (btn.clone(), button_sender));
             return Ok(());
         } else {
             return Err(DeviceError::Config(ConfigError::ModuleDoesNotExist(

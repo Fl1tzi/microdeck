@@ -50,7 +50,7 @@ pub async fn start_module(
     button: Arc<Button>,
     module_function: ModuleFunction,
     device: Arc<AsyncStreamDeck>,
-    br: ChannelReceiver
+    br: ChannelReceiver,
 ) {
     debug!("STARTED");
     let da = DeviceAccess::new(device, button.index).await;
