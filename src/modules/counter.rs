@@ -20,7 +20,7 @@ impl Module for Counter {
         button_receiver: ChannelReceiver,
         _config: Arc<Button>,
     ) -> Result<(), ReturnError> {
-        let mut button_receiver = button_receiver.into_inner();
+        let mut button_receiver = button_receiver;
 
         let font_data: &[u8] = include_bytes!("../../fonts/SpaceGrotesk.ttf");
         let font: Font<'static> = Font::try_from_bytes(font_data).unwrap();

@@ -8,7 +8,7 @@ use hidapi::HidApi;
 use std::{
     collections::HashMap,
     fmt::Display,
-    sync::Arc, cell::Cell,
+    sync::Arc,
 };
 use streamdeck::{
     asynchronous::{AsyncStreamDeck, ButtonStateUpdate},
@@ -106,7 +106,7 @@ impl Device {
                 let b = btn.clone();
 
                 runtime.spawn(async move {
-                    start_module(ser, b, module, dev, Cell::new(button_receiver)).await
+                    start_module(ser, b, module, dev, Box::new(button_receiver)).await
                 });
             }
             self.modules

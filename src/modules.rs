@@ -8,7 +8,6 @@ pub use deck_driver as streamdeck;
 use futures_util::Future;
 use image::DynamicImage;
 use lazy_static::lazy_static;
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::{error::Error, sync::Arc};
@@ -51,7 +50,7 @@ pub async fn start_module(
     button: Arc<Button>,
     module_function: ModuleFunction,
     device: Arc<AsyncStreamDeck>,
-    br: Cell<mpsc::Receiver<HostEvent>>
+    br: ChannelReceiver
 ) {
     debug!("STARTED");
     let da = DeviceAccess::new(device, button.index).await;
@@ -110,7 +109,7 @@ impl DeviceAccess {
 }
 
 pub type ReturnError = Box<dyn Error + Send + Sync>;
-pub type ChannelReceiver = Cell<mpsc::Receiver<HostEvent>>;
+pub type ChannelReceiver = Box<mpsc::Receiver<HostEvent>>;
 
 #[async_trait]
 pub trait Module {
