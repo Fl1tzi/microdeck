@@ -1,6 +1,6 @@
 use crate::{
-    modules::{retrieve_module_from_name, start_module, HostEvent},
     config::ConfigError,
+    modules::{retrieve_module_from_name, start_module, HostEvent},
     skip_if_none, unwrap_or_error, Button, DeviceConfig,
 };
 use deck_driver as streamdeck;

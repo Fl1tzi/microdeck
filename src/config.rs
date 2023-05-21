@@ -1,13 +1,13 @@
 use crate::Config;
 use dirs::config_dir;
-use tracing::debug;
 use std::{
-    fmt::{self, Display},
     env,
+    fmt::{self, Display},
     fs,
     io::ErrorKind,
-    path::PathBuf
+    path::PathBuf,
 };
+use tracing::debug;
 
 /// The name of the folder which holds the config
 pub const CONFIG_FOLDER_NAME: &'static str = "virtual-deck";
@@ -18,7 +18,7 @@ pub fn load_config() -> Result<Config, ConfigError> {
         Some(path) => {
             debug!("Using env variable: {:?}", path);
             PathBuf::from(path)
-        },
+        }
         None => {
             // try to get the system config dir; env var required if not available
             if let Some(mut path) = config_dir() {
@@ -27,7 +27,7 @@ pub fn load_config() -> Result<Config, ConfigError> {
                 debug!("Using system path: {:?}", path);
                 path
             } else {
-                return Err(ConfigError::PathNotAvailable())
+                return Err(ConfigError::PathNotAvailable());
             }
         }
     };
@@ -35,12 +35,14 @@ pub fn load_config() -> Result<Config, ConfigError> {
     let path = config_file.display().to_string().clone();
 
     match fs::read_to_string(config_file) {
-        Ok(content) => toml::from_str(&content).map_err(|e| ConfigError::SyntaxError(e.to_string())),
+        Ok(content) => {
+            toml::from_str(&content).map_err(|e| ConfigError::SyntaxError(e.to_string()))
+        }
         Err(file_error) => {
             if file_error.kind() == ErrorKind::NotFound {
-                return Err(ConfigError::FilePathDoesNotExist(path))
+                return Err(ConfigError::FilePathDoesNotExist(path));
             } else {
-                return Err(ConfigError::ReadError(file_error.to_string()))
+                return Err(ConfigError::ReadError(file_error.to_string()));
             }
         }
     }
@@ -53,9 +55,8 @@ pub enum ConfigError {
     PathNotAvailable(),
     SyntaxError(String),
     FilePathDoesNotExist(String),
-    ReadError(String)
+    ReadError(String),
 }
-
 
 impl Display for ConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -90,4 +91,3 @@ impl Display for ConfigError {
         }
     }
 }
-

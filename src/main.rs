@@ -2,11 +2,7 @@ use deck_driver as streamdeck;
 use device::Device;
 use hidapi::HidApi;
 use serde::Deserialize;
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::Duration, process::exit,
-};
+use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     self, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
@@ -14,10 +10,9 @@ use tracing_subscriber::{
 
 use config::load_config;
 
+mod config;
 mod device;
 mod modules;
-mod config;
-
 
 #[macro_export]
 macro_rules! skip_if_none {
@@ -155,7 +150,6 @@ pub async fn start_device(
         }
     }
 }
-
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct DeviceConfig {
