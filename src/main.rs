@@ -4,27 +4,20 @@ use hidapi::HidApi;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
-    env,
-    fmt::{self, Display},
-    fs,
-    io::ErrorKind,
-    path::PathBuf,
-    process::exit,
     sync::Arc,
-    time::Duration,
+    time::Duration, process::exit,
 };
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     self, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
 
-use dirs::config_dir;
+use config::load_config;
 
 mod device;
 mod modules;
+mod config;
 
-/// The name of the folder which holds the config
-pub const CONFIG_FOLDER_NAME: &'static str = "virtual-deck";
 
 #[macro_export]
 macro_rules! skip_if_none {
@@ -67,41 +60,14 @@ fn main() {
         .with(fmt_layer)
         .init();
 
-    // ------ LOAD CONFIG
-
-    let config_file: PathBuf = match env::var_os("DACH_DECKER_CONFIG") {
-        Some(path) => PathBuf::from(path),
-        None => {
-            if let Some(mut path) = config_dir() {
-                path.push(CONFIG_FOLDER_NAME);
-                path.push("config.toml");
-                path
-            } else {
-                error!("Please use the \"DACH_DECKER_CONFIG\" environment variable to provide a path to your config");
-                exit(1);
-            }
+    let config = match load_config() {
+        Ok(config) => config,
+        Err(e) => {
+            error!("{}", e);
+            exit(1)
         }
     };
 
-    info!("Loading configuration from \"{}\"", config_file.display());
-
-    let config: Config = match fs::read_to_string(config_file) {
-        Ok(content) => match toml::from_str(&content) {
-            Ok(c) => c,
-            Err(e) => {
-                error!("Error detected in configuration:\n{}", e);
-                exit(1);
-            }
-        },
-        Err(file_error) => {
-            if file_error.kind() == ErrorKind::NotFound {
-                error!("Unable to load configuration because the file does not exist. Please create the configuration file.");
-            } else {
-                error!("Cannot open the configuration file: {}", file_error);
-            }
-            exit(1);
-        }
-    };
     debug!("{:#?}", config);
 
     let hid = streamdeck::new_hidapi().expect("Could not create HidApi");
@@ -190,25 +156,6 @@ pub async fn start_device(
     }
 }
 
-pub enum ConfigError {
-    ButtonDoesNotExist(u8),
-    ModuleDoesNotExist(u8, String),
-}
-
-impl Display for ConfigError {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ConfigError::ButtonDoesNotExist(index) => {
-                write!(formatter, "Button {}: does not exist.", index)
-            }
-            ConfigError::ModuleDoesNotExist(index, module) => write!(
-                formatter,
-                "Button {}: The module \"{}\" does not exist.",
-                index, module
-            ),
-        }
-    }
-}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct DeviceConfig {
