@@ -109,7 +109,7 @@ impl Device {
                 let b = btn.clone();
 
                 runtime.spawn(async move {
-                    start_module(ser, b, module, dev, Box::new(module_receiver)).await
+                    start_module(ser, b, module, dev, module_receiver).await
                 });
             }
             // if the receiver already dropped the listener then just directly insert none.

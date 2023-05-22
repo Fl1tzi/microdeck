@@ -109,7 +109,7 @@ impl DeviceAccess {
 }
 
 pub type ReturnError = Box<dyn Error + Send + Sync>;
-pub type ChannelReceiver = Box<mpsc::Receiver<HostEvent>>;
+pub type ChannelReceiver = mpsc::Receiver<HostEvent>;
 
 #[async_trait]
 pub trait Module {
