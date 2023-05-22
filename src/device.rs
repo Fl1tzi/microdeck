@@ -1,7 +1,7 @@
 use crate::{
     config::ConfigError,
     modules::{retrieve_module_from_name, start_module, HostEvent},
-    skip_if_none, unwrap_or_error, Button, DeviceConfig,
+    unwrap_or_error, Button, DeviceConfig,
 };
 use deck_driver as streamdeck;
 use hidapi::HidApi;
@@ -18,7 +18,8 @@ use tokio::{
 };
 use tracing::{debug, error, info_span, trace};
 
-pub type ModuleController = (Arc<Button>, mpsc::Sender<HostEvent>);
+/// A module controller in holding the information of a Module
+pub type ModuleController = (Arc<Button>, Option<mpsc::Sender<HostEvent>>);
 
 pub enum DeviceError {
     DriverError(StreamDeckError),
@@ -81,6 +82,8 @@ impl Device {
         })
     }
 
+    /// Create the runtime for all the modules and iterate through all the buttons to create their
+    /// modules.
     pub async fn init_modules(&mut self) {
         if self.modules_runtime.is_none() {
             self.modules_runtime = Some(Runtime::new().unwrap());
@@ -91,23 +94,31 @@ impl Device {
         }
     }
 
+    /// spawn the module onto the runtime
     async fn _create_module(&mut self, btn: Arc<Button>) -> Result<(), DeviceError> {
         let runtime = self
             .modules_runtime
             .as_ref()
             .expect("Runtime has to be created before module can be spawned");
-        let (button_sender, button_receiver) = mpsc::channel(4);
+        let (module_sender, module_receiver) = mpsc::channel(4);
         if let Some(module) = retrieve_module_from_name(&btn.module) {
             {
+                // initialize the module
                 let ser = self.serial.clone();
                 let dev = self.device.clone();
                 let b = btn.clone();
 
                 runtime.spawn(async move {
-                    start_module(ser, b, module, dev, Box::new(button_receiver)).await
+                    start_module(ser, b, module, dev, Box::new(module_receiver)).await
                 });
             }
-            self.modules.insert(btn.index, (btn.clone(), button_sender));
+            // if the receiver already dropped the listener then just directly insert none.
+            // Optimizes performance because the key_listener just does not try to send the event.
+            if module_sender.is_closed() {
+                self.modules.insert(btn.index, (btn.clone(), None));
+            } else {
+                self.modules.insert(btn.index, (btn.clone(), Some(module_sender)));
+            }
             return Ok(());
         } else {
             return Err(DeviceError::Config(ConfigError::ModuleDoesNotExist(
@@ -121,16 +132,19 @@ impl Device {
         self.serial.clone()
     }
 
+    /// shutdown the runtime and therefore kill all the modules
     fn drop(&mut self) {
         if let Some(handle) = self.modules_runtime.take() {
             handle.shutdown_background();
         }
     }
 
+    /// if there is no runtime left or the runtime never got initialized
     pub fn is_dropped(&self) -> bool {
         self.modules_runtime.is_none()
     }
 
+    /// if this device holds any modules
     pub fn has_modules(&self) -> bool {
         !self.modules.is_empty()
     }
@@ -143,24 +157,7 @@ impl Device {
                 Ok(v) => {
                     trace!("{:?}", v);
                     for update in v {
-                        match update {
-                            ButtonStateUpdate::ButtonDown(i) => {
-                                let options = skip_if_none!(self.modules.get(&i));
-                                if let Some(on_click) = &options.0.on_click {
-                                    execute_sh(on_click).await;
-                                } else {
-                                    send_to_channel(&options.1, HostEvent::ButtonPressed).await;
-                                }
-                            }
-                            ButtonStateUpdate::ButtonUp(i) => {
-                                let options = skip_if_none!(self.modules.get(&i));
-                                if let Some(on_release) = &options.0.on_release {
-                                    execute_sh(on_release).await;
-                                } else {
-                                    send_to_channel(&options.1, HostEvent::ButtonReleased).await;
-                                }
-                            }
-                        }
+                        self.button_state_update(update).await;
                     }
                 }
                 Err(e) => match e {
@@ -174,7 +171,38 @@ impl Device {
             }
         }
     }
+
+    /// Handle all incoming button state updates from the listener (shell actions, module sender)
+    async fn button_state_update(&mut self, event: ButtonStateUpdate) {
+        // get the index out of the enum...
+        let index = match event {
+            ButtonStateUpdate::ButtonUp(i) => i,
+            ButtonStateUpdate::ButtonDown(i) => i
+        };
+        // try to get config for the module
+        let options = match self.modules.get_mut(&index) {
+            Some(options) => options,
+            None => return
+        };
+        // action will only be some if on_click/on_release is specified in config
+        let (action, event) = match event {
+            ButtonStateUpdate::ButtonDown(_) => (&options.0.on_click, HostEvent::ButtonPressed),
+            ButtonStateUpdate::ButtonUp(_) => (&options.0.on_release, HostEvent::ButtonReleased)
+        };
+        // try to send to module and drop the sender if the receiver was droppped
+        if let Some(sender) = options.to_owned().1 {
+            if send_to_channel(&sender, event).await == false {
+                trace!("Sender of button {index} dropped");
+                options.1 = None
+            }
+        }
+        // if config includes custom actions execute them
+        if let Some(action) = action {
+            execute_sh(&action).await
+        }
+    }
 }
+
 
 pub async fn execute_sh(command: &str) {
     match Command::new("sh").arg(command).output().await {
