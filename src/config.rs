@@ -1,4 +1,4 @@
-use crate::Config;
+use serde::Deserialize;
 use dirs::config_dir;
 use std::{
     env,
@@ -6,11 +6,46 @@ use std::{
     fs,
     io::ErrorKind,
     path::PathBuf,
+    collections::HashMap,
+    sync::Arc
 };
 use tracing::debug;
 
 /// The name of the folder which holds the config
 pub const CONFIG_FOLDER_NAME: &'static str = "virtual-deck";
+
+#[derive(Deserialize, Debug)]
+pub struct Config {
+    pub global: Option<GlobalConfig>,
+    pub devices: Vec<DeviceConfig>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct GlobalConfig;
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct DeviceConfig {
+    pub serial: String,
+    #[serde(default = "default_brightness")]
+    pub brightness: u8,
+    pub buttons: Vec<Arc<Button>>,
+}
+
+fn default_brightness() -> u8 {
+    100
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct Button {
+    pub index: u8,
+    pub module: String,
+    /// options which get passed to the module
+    pub options: Option<HashMap<String, String>>,
+    /// allows to overwrite what it will do on a click (executes in /bin/sh)
+    pub on_click: Option<String>,
+    /// allows to overwrite what it will do on a release
+    pub on_release: Option<String>,
+}
 
 #[tracing::instrument]
 pub fn load_config() -> Result<Config, ConfigError> {

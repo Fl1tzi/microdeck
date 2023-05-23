@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::Button;
+use crate::config::Button;
 
 use super::Module;
 use super::{ChannelReceiver, DeviceAccess, HostEvent, ReturnError};

@@ -1,8 +1,8 @@
 use deck_driver as streamdeck;
+use crate::config::{Config, DeviceConfig};
 use device::Device;
 use hidapi::HidApi;
-use serde::Deserialize;
-use std::{collections::HashMap, process::exit, sync::Arc, time::Duration};
+use std::{collections::HashMap, process::exit, time::Duration};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     self, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
@@ -33,16 +33,6 @@ macro_rules! unwrap_or_error {
         }
     };
 }
-
-/// The config structure
-#[derive(Deserialize, Debug)]
-pub struct Config {
-    global: Option<GlobalConfig>,
-    device: Vec<DeviceConfig>,
-}
-
-#[derive(Deserialize, Debug)]
-struct GlobalConfig;
 
 fn main() {
     let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
@@ -101,7 +91,7 @@ pub async fn start(config: Config, mut hid: HidApi) {
                 if !ignore_devices.contains(&hw_device.1) && devices.get(&hw_device.1).is_none() {
                     debug!("New device detected: {}", &hw_device.1);
                     if let Some(device_config) =
-                        config.device.iter().find(|d| d.serial == hw_device.1)
+                        config.devices.iter().find(|d| d.serial == hw_device.1)
                     {
                         // start the device and its listener
                         if let Some(device) =
@@ -151,26 +141,3 @@ pub async fn start_device(
     }
 }
 
-#[derive(Deserialize, Debug, Clone)]
-pub struct DeviceConfig {
-    pub serial: String,
-    #[serde(default = "default_brightness")]
-    pub brightness: u8,
-    pub buttons: Vec<Arc<Button>>,
-}
-
-fn default_brightness() -> u8 {
-    100
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct Button {
-    index: u8,
-    module: String,
-    /// options which get passed to the module
-    options: Option<HashMap<String, String>>,
-    /// allows to overwrite what it will do on a click (executes in /bin/sh)
-    pub on_click: Option<String>,
-    /// allows to overwrite what it will do on a release; Same options as [on_click]
-    pub on_release: Option<String>,
-}

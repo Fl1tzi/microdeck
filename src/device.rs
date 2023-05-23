@@ -1,7 +1,7 @@
 use crate::{
-    config::ConfigError,
+    config::{Button, ConfigError, DeviceConfig},
     modules::{retrieve_module_from_name, start_module, HostEvent},
-    unwrap_or_error, Button, DeviceConfig,
+    unwrap_or_error,
 };
 use deck_driver as streamdeck;
 use hidapi::HidApi;
@@ -64,7 +64,7 @@ impl Device {
         let button_count = kind.key_count();
 
         // CONFIG VALIDATING
-        for button in device_conf.buttons.clone().into_iter() {
+        for button in device_conf.buttons.as_slice().into_iter() {
             let _span_button = info_span!("button", index = button.index).entered();
             // if the index of the button is higher than the button count
             if button_count < button.index {
@@ -123,7 +123,7 @@ impl Device {
         } else {
             return Err(DeviceError::Config(ConfigError::ModuleDoesNotExist(
                 btn.index,
-                btn.module.clone(),
+                btn.module.to_owned(),
             )));
         }
     }

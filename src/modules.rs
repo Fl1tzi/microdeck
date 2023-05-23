@@ -2,7 +2,7 @@ mod blank;
 mod counter;
 
 use self::counter::Counter;
-use crate::Button;
+use crate::config::Button;
 use async_trait::async_trait;
 pub use deck_driver as streamdeck;
 use futures_util::Future;
@@ -38,8 +38,8 @@ pub enum HostEvent {
 pub type ModuleFuture = Pin<Box<dyn Future<Output = Result<(), ReturnError>> + Send>>;
 pub type ModuleFunction = fn(DeviceAccess, ChannelReceiver, Arc<Button>) -> ModuleFuture;
 
-pub fn retrieve_module_from_name(name: &String) -> Option<ModuleFunction> {
-    MODULE_MAP.get(name.as_str()).copied()
+pub fn retrieve_module_from_name(name: &str) -> Option<ModuleFunction> {
+    MODULE_MAP.get(name).copied()
 }
 
 /// starts a module
