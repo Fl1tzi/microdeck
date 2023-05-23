@@ -10,9 +10,11 @@ use std::{
     sync::Arc
 };
 use tracing::debug;
+use serde_json;
 
 /// The name of the folder which holds the config
-pub const CONFIG_FOLDER_NAME: &'static str = "virtual-deck";
+pub const CONFIG_FOLDER_NAME: &'static str = "microdeck";
+pub const CONFIG_FILE: &'static str = "config.json";
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -58,7 +60,7 @@ pub fn load_config() -> Result<Config, ConfigError> {
             // try to get the system config dir; env var required if not available
             if let Some(mut path) = config_dir() {
                 path.push(CONFIG_FOLDER_NAME);
-                path.push("config.toml");
+                path.push(CONFIG_FILE);
                 debug!("Using system path: {:?}", path);
                 path
             } else {
@@ -71,7 +73,7 @@ pub fn load_config() -> Result<Config, ConfigError> {
 
     match fs::read_to_string(config_file) {
         Ok(content) => {
-            toml::from_str(&content).map_err(|e| ConfigError::SyntaxError(e.to_string()))
+            serde_json::from_str(&content).map_err(|e| ConfigError::SyntaxError(e.to_string()))
         }
         Err(file_error) => {
             if file_error.kind() == ErrorKind::NotFound {
