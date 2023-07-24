@@ -1,4 +1,22 @@
-[workspace]
-members = [
-  "microdeck-core"
-]
+[package]
+name = "microdeck"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+hidapi = "2.2.0"
+deck-driver = { git = "https://codeberg.org/Fl1tzi/deck-driver.git", branch = "main", features = ["async"] }
+tokio = { version = "1", features = ["full"] }
+log = "0.4"
+dirs = "4.0.0"
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+image = "0.24.5"
+async-trait = "0.1.66"
+futures-util = "0.3.27"
+imageproc = "0.23.0"
+rusttype = "0.9.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+lazy_static = "1.4.0"
