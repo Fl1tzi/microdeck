@@ -1,30 +1,40 @@
-use serde::Deserialize;
 use dirs::config_dir;
+use serde::Deserialize;
+use serde_json;
 use std::{
+    collections::HashMap,
     env,
     fmt::{self, Display},
     fs,
+    hash::Hash,
     io::ErrorKind,
     path::PathBuf,
-    collections::HashMap,
-    sync::Arc
+    sync::Arc,
 };
 use tracing::debug;
-use serde_json;
 
 /// The name of the folder which holds the config
 pub const CONFIG_FOLDER_NAME: &'static str = "microdeck";
 pub const CONFIG_FILE: &'static str = "config.json";
 
+/// Combination of buttons acting as a folder which a device can switch to
+pub type Space = Vec<Arc<Button>>;
+
+/// CONFIGURATION
 #[derive(Deserialize, Debug)]
 pub struct Config {
     pub global: Option<GlobalConfig>,
     pub devices: Vec<DeviceConfig>,
+    pub spaces: Arc<HashMap<String, Space>>,
 }
 
+/// settings that effect all devices
 #[derive(Deserialize, Debug)]
-pub struct GlobalConfig;
+pub struct GlobalConfig {
+    pub font_family: Option<String>,
+}
 
+/// configuration of a single device with its default page
 #[derive(Deserialize, Debug, Clone)]
 pub struct DeviceConfig {
     pub serial: String,
@@ -42,11 +52,16 @@ pub struct Button {
     pub index: u8,
     pub module: String,
     /// options which get passed to the module
-    pub options: Option<HashMap<String, String>>,
-    /// allows to overwrite what it will do on a click (executes in /bin/sh)
+    #[serde(default = "new_hashmap")]
+    pub options: HashMap<String, String>,
+    /// allows to overwrite what it will do on a click
     pub on_click: Option<String>,
     /// allows to overwrite what it will do on a release
     pub on_release: Option<String>,
+}
+
+fn new_hashmap() -> HashMap<String, String> {
+    HashMap::new()
 }
 
 #[tracing::instrument]

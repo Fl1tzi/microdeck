@@ -1,15 +1,24 @@
 mod blank;
 mod counter;
+mod space;
 
+// modules
 use self::counter::Counter;
+use self::space::Space;
+
+use crate::GLOBAL_FONT;
+// other things
 use crate::config::Button;
 use async_trait::async_trait;
 pub use deck_driver as streamdeck;
 use futures_util::Future;
-use image::DynamicImage;
+use image::{DynamicImage, Rgb, RgbImage};
+use imageproc::drawing::draw_text_mut;
 use lazy_static::lazy_static;
+use rusttype::Scale;
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::{error::Error, sync::Arc};
 pub use streamdeck::info::ImageFormat;
 use streamdeck::info::Kind;
@@ -22,6 +31,7 @@ lazy_static! {
     static ref MODULE_MAP: HashMap<&'static str, ModuleFunction> = {
         let mut m = HashMap::new();
         m.insert("counter", Counter::run as ModuleFunction);
+        m.insert("space", Space::run as ModuleFunction);
         m
     };
 }
@@ -103,9 +113,52 @@ impl DeviceAccess {
         self.format().size
     }
 
-    pub fn kind(&self) -> Kind {
-        self.kind
+    /// Draw an image with text
+    ///
+    /// 60% image
+    /// 40% text
+    pub fn image_with_text(&self, image: Vec<u8>, text: String, config: &Button) -> DynamicImage {
+        let res = self.resolution();
+        let mut image = RgbImage::new(res.0 as u32, res.1 as u32);
+        draw_text_mut(
+            &mut image,
+            Rgb([255, 255, 255]),
+            -10,
+            10,
+            Scale::uniform(parse_config(config, &"FONT_SIZE".into(), 20.0)),
+            &GLOBAL_FONT.get().unwrap(),
+            &text,
+        );
+        image::DynamicImage::ImageRgb8(image)
     }
+
+    /// Draw text
+    pub fn text(&self, text: String, config: &Button) -> DynamicImage {
+        let res = self.resolution();
+        let mut image = RgbImage::new(res.0 as u32, res.1 as u32);
+        draw_text_mut(
+            &mut image,
+            Rgb([255, 255, 255]),
+            10,
+            10,
+            Scale::uniform(parse_config(config, &"FONT_SIZE".into(), 20.0)),
+            &GLOBAL_FONT.get().unwrap(),
+            &text,
+        );
+        image::DynamicImage::ImageRgb8(image)
+    }
+}
+
+/// reads a key from the config and parses the config in the given type
+fn parse_config<T>(config: &Button, key: &String, if_wrong_type: T) -> T
+where
+    T: FromStr,
+{
+    let out = match config.options.get(key) {
+        Some(value) => value.parse::<T>().unwrap_or(if_wrong_type),
+        None => if_wrong_type,
+    };
+    out
 }
 
 pub type ReturnError = Box<dyn Error + Send + Sync>;

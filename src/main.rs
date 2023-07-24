@@ -1,18 +1,27 @@
+use crate::config::{Config, DeviceConfig, GlobalConfig};
 use deck_driver as streamdeck;
-use crate::config::{Config, DeviceConfig};
 use device::Device;
+use font_loader::system_fonts::{FontProperty, FontPropertyBuilder};
 use hidapi::HidApi;
-use std::{collections::HashMap, process::exit, time::Duration};
-use tracing::{debug, error, info, warn};
+use rusttype::Font;
+use std::{
+    collections::HashMap,
+    process::exit,
+    sync::{Arc, Mutex, OnceLock},
+    time::Duration,
+};
+use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::{
     self, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
 
-use config::load_config;
+use config::{load_config, Space};
 
 mod config;
 mod device;
 mod modules;
+
+pub static GLOBAL_FONT: OnceLock<Font> = OnceLock::new();
 
 #[macro_export]
 macro_rules! skip_if_none {
@@ -53,6 +62,29 @@ fn main() {
         }
     };
 
+    // load font
+    // TODO: make this prettier
+    let font = match config.global {
+        Some(ref g) => {
+            if let Some(family) = &g.font_family {
+                font_loader::system_fonts::get(
+                    &mut FontPropertyBuilder::new().family(family.as_str()).build(),
+                )
+                .unwrap_or_else(|| {
+                    warn!("Unable to load custom font");
+                    load_system_font()
+                })
+            } else {
+                load_system_font()
+            }
+        }
+        None => load_system_font(),
+    };
+
+    GLOBAL_FONT
+        .set(Font::try_from_vec(font.0).expect("Unable to parse font. Maybe try another font?"))
+        .unwrap();
+
     debug!("{:#?}", config);
 
     let hid = streamdeck::new_hidapi().expect("Could not create HidApi");
@@ -64,6 +96,12 @@ fn main() {
         .block_on(start(config, hid))
 }
 
+fn load_system_font() -> (Vec<u8>, i32) {
+    debug!("Retrieving system font");
+    font_loader::system_fonts::get(&mut FontPropertyBuilder::new().monospace().build())
+        .expect("Unable to load system monospace font. Please specify a custom font in the config.")
+}
+
 pub async fn start(config: Config, mut hid: HidApi) {
     let mut devices: HashMap<String, Device> = HashMap::new();
 
@@ -72,7 +110,7 @@ pub async fn start(config: Config, mut hid: HidApi) {
 
     loop {
         // check for devices that can be removed
-        let mut removable_devices = Vec::new();
+        /* let mut removable_devices = Vec::new();
         for (key, device) in &devices {
             if device.is_dropped() {
                 removable_devices.push(key.to_owned());
@@ -80,7 +118,7 @@ pub async fn start(config: Config, mut hid: HidApi) {
         }
         for d in removable_devices {
             devices.remove(&d);
-        }
+        }*/
 
         // refresh device list
         if let Err(e) = streamdeck::refresh_device_list(&mut hid) {
@@ -90,12 +128,20 @@ pub async fn start(config: Config, mut hid: HidApi) {
                 // if the device is not ignored and device is not already started
                 if !ignore_devices.contains(&hw_device.1) && devices.get(&hw_device.1).is_none() {
                     debug!("New device detected: {}", &hw_device.1);
-                    if let Some(device_config) =
-                        config.devices.iter().find(|d| d.serial == hw_device.1)
+                    // match regex for device serial
+                    if let Some(device_config) = config
+                        .devices
+                        .iter()
+                        .find(|d| d.serial == hw_device.1 || d.serial == "*")
                     {
                         // start the device and its listener
-                        if let Some(device) =
-                            start_device(hw_device, &hid, device_config.clone()).await
+                        if let Some(device) = start_device(
+                            hw_device,
+                            &hid,
+                            device_config.clone(),
+                            config.spaces.clone(),
+                        )
+                        .await
                         {
                             devices.insert(device.serial(), device);
                         }
@@ -117,16 +163,11 @@ pub async fn start_device(
     device: (streamdeck::info::Kind, String),
     hid: &HidApi,
     device_config: DeviceConfig,
+    spaces: Arc<HashMap<String, Space>>,
 ) -> Option<Device> {
-    match Device::new(device.1, device.0, device_config, &hid).await {
+    match Device::new(device.1, device.0, device_config, spaces, &hid).await {
         Ok(mut device) => {
             info!("Connected");
-            // start all modules or print out the error
-            /* device_config.buttons.iter().for_each(|button| {
-                device
-                    .create_module(&button)
-                    .unwrap_or_else(|e| error!("{}", e))
-            });*/
             device.init_modules().await;
             device.key_listener().await;
             if !device.has_modules() {
@@ -140,4 +181,3 @@ pub async fn start_device(
         }
     }
 }
-

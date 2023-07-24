@@ -1,5 +1,5 @@
 use crate::{
-    config::{Button, ConfigError, DeviceConfig},
+    config::{Button, ConfigError, DeviceConfig, Space},
     modules::{retrieve_module_from_name, start_module, HostEvent},
     unwrap_or_error,
 };
@@ -41,6 +41,7 @@ pub struct Device {
     device: Arc<AsyncStreamDeck>,
     modules_runtime: Option<Runtime>,
     config: DeviceConfig,
+    spaces: Arc<HashMap<String, Space>>,
     serial: String,
 }
 
@@ -49,6 +50,7 @@ impl Device {
         serial: String,
         kind: Kind,
         device_conf: DeviceConfig,
+        spaces: Arc<HashMap<String, Space>>,
         hid: &HidApi,
     ) -> Result<Device, DeviceError> {
         // connect to deck or continue to next
@@ -78,6 +80,7 @@ impl Device {
             device: deck,
             modules_runtime: None,
             config: device_conf,
+            spaces,
             serial,
         })
     }
@@ -108,16 +111,16 @@ impl Device {
                 let dev = self.device.clone();
                 let b = btn.clone();
 
-                runtime.spawn(async move {
-                    start_module(ser, b, module, dev, module_receiver).await
-                });
+                runtime
+                    .spawn(async move { start_module(ser, b, module, dev, module_receiver).await });
             }
             // if the receiver already dropped the listener then just directly insert none.
             // Optimizes performance because the key_listener just does not try to send the event.
             if module_sender.is_closed() {
                 self.modules.insert(btn.index, (btn.clone(), None));
             } else {
-                self.modules.insert(btn.index, (btn.clone(), Some(module_sender)));
+                self.modules
+                    .insert(btn.index, (btn.clone(), Some(module_sender)));
             }
             return Ok(());
         } else {
@@ -137,11 +140,7 @@ impl Device {
         if let Some(handle) = self.modules_runtime.take() {
             handle.shutdown_background();
         }
-    }
-
-    /// if there is no runtime left or the runtime never got initialized
-    pub fn is_dropped(&self) -> bool {
-        self.modules_runtime.is_none()
+        self.modules = HashMap::new();
     }
 
     /// if this device holds any modules
@@ -172,22 +171,36 @@ impl Device {
         }
     }
 
+    /// Switch to a space. This will tear down the whole runtime of the current space.
+    #[tracing::instrument(skip_all, fields(serial = self.serial))]
+    async fn switch_to_space(&mut self, name: &String) {
+        debug!("Switching to space {}", name);
+        self.drop();
+        if let Some(space) = self.spaces.get(name) {
+            self.config.buttons = space.clone();
+            self.device.reset().await.unwrap();
+            self.init_modules().await;
+        } else {
+            error!("Space {} was not found", name);
+        };
+    }
+
     /// Handle all incoming button state updates from the listener (shell actions, module sender)
     async fn button_state_update(&mut self, event: ButtonStateUpdate) {
         // get the index out of the enum...
         let index = match event {
             ButtonStateUpdate::ButtonUp(i) => i,
-            ButtonStateUpdate::ButtonDown(i) => i
+            ButtonStateUpdate::ButtonDown(i) => i,
         };
         // try to get config for the module
         let options = match self.modules.get_mut(&index) {
             Some(options) => options,
-            None => return
+            None => return,
         };
         // action will only be some if on_click/on_release is specified in config
         let (action, event) = match event {
             ButtonStateUpdate::ButtonDown(_) => (&options.0.on_click, HostEvent::ButtonPressed),
-            ButtonStateUpdate::ButtonUp(_) => (&options.0.on_release, HostEvent::ButtonReleased)
+            ButtonStateUpdate::ButtonUp(_) => (&options.0.on_release, HostEvent::ButtonReleased),
         };
         // try to send to module and drop the sender if the receiver was droppped
         if let Some(sender) = options.to_owned().1 {
@@ -200,9 +213,16 @@ impl Device {
         if let Some(action) = action {
             execute_sh(&action).await
         }
+        // switch space if needed
+        if options.0.module == "space" {
+            let name = match options.0.options.get("NAME") {
+                Some(n) => n.clone(),
+                None => return,
+            };
+            self.switch_to_space(&name).await;
+        }
     }
 }
-
 
 pub async fn execute_sh(command: &str) {
     match Command::new("sh").arg(command).output().await {
