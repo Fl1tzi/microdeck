@@ -6,17 +6,21 @@ mod space;
 use self::counter::Counter;
 use self::space::Space;
 
-use crate::GLOBAL_FONT;
 // other things
+use crate::GLOBAL_FONT;
 use crate::config::Button;
 use async_trait::async_trait;
 pub use deck_driver as streamdeck;
 use futures_util::Future;
-use image::{DynamicImage, Rgb, RgbImage};
+use image::imageops::{resize, self};
+use image::io::Reader;
+use image::{DynamicImage, Rgb, RgbImage, ImageBuffer};
 use imageproc::drawing::draw_text_mut;
+use imageproc::filter;
 use lazy_static::lazy_static;
 use rusttype::Scale;
 use std::collections::HashMap;
+use std::io::{BufReader, self};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::{error::Error, sync::Arc};
@@ -25,7 +29,7 @@ use streamdeck::info::Kind;
 use streamdeck::AsyncStreamDeck;
 pub use streamdeck::StreamDeckError;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 lazy_static! {
     static ref MODULE_MAP: HashMap<&'static str, ModuleFunction> = {
@@ -114,26 +118,44 @@ impl DeviceAccess {
     }
 
     /// Draw an image with text
-    ///
-    /// 60% image
-    /// 40% text
-    pub fn image_with_text(&self, image: Vec<u8>, text: String, config: &Button) -> DynamicImage {
-        let res = self.resolution();
-        let mut image = RgbImage::new(res.0 as u32, res.1 as u32);
+    #[tracing::instrument(skip_all, fields(index = config.index))]
+    pub fn image_with_text(&self, image: DynamicImage, text: String, config: &Button) -> DynamicImage {
+        trace!("Render start");
+        let (w, h) = self.resolution();
+
+        let image_scaling = parse_config(&config, &"IMAGE_SCALE".into(), 65.0);
+
+        // TODO: lots of parsing. This can probbably be improved.
+        let new_h = (h as f32 * (image_scaling * 0.01)) as u32;
+        let new_w = (w as f32 * (image_scaling * 0.01)) as u32;
+
+        // Calculate percentage of which we can scale down to the button resolution.
+        // By taking the smallest it keeps the aspect ratio.
+        // let percentage = f32::min(deck_w / image.width() as f32, deck_h / image.height() as f32);
+        
+        let image = image.resize_to_fill(new_w, new_h, image::imageops::FilterType::Nearest);
+
+        let mut base_image = RgbImage::new(h as u32, w as u32);
         draw_text_mut(
-            &mut image,
+            &mut base_image,
             Rgb([255, 255, 255]),
-            -10,
-            10,
-            Scale::uniform(parse_config(config, &"FONT_SIZE".into(), 20.0)),
+            0,
+            h as i32 - 20,
+            Scale::uniform(parse_config(config, &"FONT_SIZE".into(), 15.0)),
             &GLOBAL_FONT.get().unwrap(),
             &text,
         );
-        image::DynamicImage::ImageRgb8(image)
+        // position at the middle
+        let free_space = w - image.width() as usize;
+        imageops::overlay(&mut base_image, &image.to_rgb8(), (free_space/2) as i64, 0);
+        trace!("Render end");
+        image::DynamicImage::ImageRgb8(base_image)
     }
 
     /// Draw text
+    #[tracing::instrument(skip_all, fields(index = config.index))]
     pub fn text(&self, text: String, config: &Button) -> DynamicImage {
+        trace!("Render start");
         let res = self.resolution();
         let mut image = RgbImage::new(res.0 as u32, res.1 as u32);
         draw_text_mut(
@@ -141,16 +163,41 @@ impl DeviceAccess {
             Rgb([255, 255, 255]),
             10,
             10,
-            Scale::uniform(parse_config(config, &"FONT_SIZE".into(), 20.0)),
+            Scale::uniform(parse_config(config, &"FONT_SIZE".into(), 15.0)),
             &GLOBAL_FONT.get().unwrap(),
             &text,
         );
+        trace!("Render end");
         image::DynamicImage::ImageRgb8(image)
     }
 }
 
+/// Loads the image from the `IMAGE` option.
+/// Displays [create_error_image] if it does not exist or cannot be loeded.
+pub fn load_image(config: &Button) -> io::Result<DynamicImage> {
+    // TODO: maybe us an Option (faster?)
+    let file_path = parse_config(config, &"IMAGE".into(), "None".to_string());
+
+    if file_path == "None" {
+        return Ok(create_error_image());
+    }
+
+    Ok(Reader::open(file_path)?.decode().expect("Unable to decode image"))
+}
+
+/// A smooth red image which should represent an empty space
+pub fn create_error_image() -> DynamicImage {
+    let mut error_img: RgbImage = ImageBuffer::new(1, 1);
+
+    for pixel in error_img.enumerate_pixels_mut() {
+        *pixel.2 = image::Rgb([240, 128, 128]);
+    }
+
+    DynamicImage::ImageRgb8(error_img)
+}
+
 /// reads a key from the config and parses the config in the given type
-fn parse_config<T>(config: &Button, key: &String, if_wrong_type: T) -> T
+pub fn parse_config<T>(config: &Button, key: &String, if_wrong_type: T) -> T
 where
     T: FromStr,
 {

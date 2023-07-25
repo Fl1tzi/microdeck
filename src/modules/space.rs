@@ -3,6 +3,9 @@ use super::ChannelReceiver;
 use super::DeviceAccess;
 use super::Module;
 use super::ReturnError;
+use super::create_error_image;
+use super::load_image;
+use super::parse_config;
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -12,10 +15,16 @@ pub struct Space;
 #[async_trait]
 impl Module for Space {
     async fn run(
-        _streamdeck: DeviceAccess,
+        streamdeck: DeviceAccess,
         _button_receiver: ChannelReceiver,
-        _config: Arc<Button>,
+        config: Arc<Button>,
     ) -> Result<(), ReturnError> {
+        // let icon = load_image(&config).unwrap();
+        let icon = create_error_image();
+
+        let image = streamdeck.image_with_text(icon, parse_config(&config, &"NAME".into(), "Unknown".to_string()), &config);
+
+        streamdeck.write_img(image).await.unwrap();
         Ok(())
     }
 }

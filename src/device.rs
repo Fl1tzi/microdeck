@@ -16,7 +16,7 @@ use tokio::{
     runtime::Runtime,
     sync::mpsc::{self, error::TrySendError},
 };
-use tracing::{debug, error, info_span, trace};
+use tracing::{debug, error, info_span, trace, warn};
 
 /// A module controller in holding the information of a Module
 pub type ModuleController = (Arc<Button>, Option<mpsc::Sender<HostEvent>>);
@@ -42,6 +42,7 @@ pub struct Device {
     modules_runtime: Option<Runtime>,
     config: DeviceConfig,
     spaces: Arc<HashMap<String, Space>>,
+    selected_space: Option<String>,
     serial: String,
 }
 
@@ -81,6 +82,7 @@ impl Device {
             modules_runtime: None,
             config: device_conf,
             spaces,
+            selected_space: None,
             serial,
         })
     }
@@ -91,8 +93,17 @@ impl Device {
         if self.modules_runtime.is_none() {
             self.modules_runtime = Some(Runtime::new().unwrap());
         }
-        for i in 0..self.config.buttons.len() {
-            let button = self.config.buttons.get(i).unwrap().to_owned();
+        // TODO: DO THIS WITHOUT CLONING! Currently takes up a big amount of memory.
+        let button_config = match &self.selected_space {
+            Some(s) => self.spaces.get(s).unwrap_or_else(|| {
+                warn!("The space \"{}\" was not found", s);
+                &self.config.buttons
+            }
+            ).to_owned(),
+            None => self.config.buttons.to_owned()
+        };
+        for i in 0..button_config.len() {
+            let button = button_config.get(i).unwrap().to_owned();
             unwrap_or_error!(self._create_module(button).await);
         }
     }
@@ -173,16 +184,16 @@ impl Device {
 
     /// Switch to a space. This will tear down the whole runtime of the current space.
     #[tracing::instrument(skip_all, fields(serial = self.serial))]
-    async fn switch_to_space(&mut self, name: &String) {
+    async fn switch_to_space(&mut self, name: String) {
         debug!("Switching to space {}", name);
-        self.drop();
-        if let Some(space) = self.spaces.get(name) {
-            self.config.buttons = space.clone();
-            self.device.reset().await.unwrap();
-            self.init_modules().await;
+        if name.to_lowercase() == "home" {
+            self.selected_space = None
         } else {
-            error!("Space {} was not found", name);
-        };
+            self.selected_space = Some(name)
+        }
+        self.drop();
+        self.device.reset().await.unwrap();
+        self.init_modules().await;
     }
 
     /// Handle all incoming button state updates from the listener (shell actions, module sender)
@@ -219,7 +230,7 @@ impl Device {
                 Some(n) => n.clone(),
                 None => return,
             };
-            self.switch_to_space(&name).await;
+            self.switch_to_space(name).await;
         }
     }
 }
