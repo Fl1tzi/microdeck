@@ -192,7 +192,9 @@ impl Device {
             self.selected_space = Some(name)
         }
         self.drop();
-        self.device.reset().await.unwrap();
+        for key in 0..self.device.kind().key_count() {
+            self.device.clear_button_image(key).await.unwrap();
+        }
         self.init_modules().await;
     }
 
