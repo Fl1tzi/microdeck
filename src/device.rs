@@ -181,7 +181,7 @@ impl Device {
                     StreamDeckError::HidError(e) => {
                         error!("Shutting down device because of: {e}");
                         self.drop();
-                        // break;
+                        break;
                     }
                     _ => error!("{e}"),
                 },
