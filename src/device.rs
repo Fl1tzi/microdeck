@@ -35,6 +35,12 @@ impl Display for DeviceError {
     }
 }
 
+impl Display for Device {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(formatter, "{}", self.serial)
+    }
+}
+
 /// Handles everything related to a single device
 pub struct Device {
     modules: HashMap<u8, ModuleController>,
@@ -162,8 +168,9 @@ impl Device {
     /// listener for button press changes on the device
     #[tracing::instrument(skip_all, fields(serial = self.serial))]
     pub async fn key_listener(&mut self) {
+        let reader = self.device.get_reader();
         loop {
-            match self.device.get_reader().read(7.0).await {
+            match reader.read(7.0).await {
                 Ok(v) => {
                     trace!("{:?}", v);
                     for update in v {
@@ -174,7 +181,7 @@ impl Device {
                     StreamDeckError::HidError(e) => {
                         error!("Shutting down device because of: {e}");
                         self.drop();
-                        break;
+                        // break;
                     }
                     _ => error!("{e}"),
                 },
@@ -238,9 +245,9 @@ impl Device {
 }
 
 pub async fn execute_sh(command: &str) {
-    match Command::new("sh").arg(command).output().await {
-        Ok(o) => debug!("Command \'{}\' returned: {}", command, o.status),
-        Err(e) => error!("Command \'{}\' failed: {}", command, e),
+    match Command::new("sh").arg("-c").arg(command).spawn() {
+        Ok(_) => debug!("Command \'{}\' returned", command),
+        Err(_) => error!("Command \'{}\' failed", command),
     }
 }
 

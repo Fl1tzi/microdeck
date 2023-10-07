@@ -170,9 +170,6 @@ pub async fn start_device(
             info!("Connected");
             device.init_modules().await;
             device.key_listener().await;
-            if !device.has_modules() {
-                warn!("All modules have failed to start");
-            }
             Some(device)
         }
         Err(e) => {
