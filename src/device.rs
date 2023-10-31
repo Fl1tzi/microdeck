@@ -101,12 +101,15 @@ impl Device {
         }
         // TODO: DO THIS WITHOUT CLONING! Currently takes up a big amount of memory.
         let button_config = match &self.selected_space {
-            Some(s) => self.spaces.get(s).unwrap_or_else(|| {
-                warn!("The space \"{}\" was not found", s);
-                &self.config.buttons
-            }
-            ).to_owned(),
-            None => self.config.buttons.to_owned()
+            Some(s) => self
+                .spaces
+                .get(s)
+                .unwrap_or_else(|| {
+                    warn!("The space \"{}\" was not found", s);
+                    &self.config.buttons
+                })
+                .to_owned(),
+            None => self.config.buttons.to_owned(),
         };
         for i in 0..button_config.len() {
             let button = button_config.get(i).unwrap().to_owned();

@@ -1,3 +1,4 @@
+use crate::type_definition::PrettyPrint;
 use dirs::config_dir;
 use serde::Deserialize;
 use serde_json;
@@ -6,9 +7,9 @@ use std::{
     env,
     fmt::{self, Display},
     fs,
-    hash::Hash,
     io::ErrorKind,
     path::PathBuf,
+    str::FromStr,
     sync::Arc,
 };
 use tracing::debug;
@@ -19,6 +20,10 @@ pub const CONFIG_FILE: &'static str = "config.json";
 
 /// Combination of buttons acting as a folder which a device can switch to
 pub type Space = Vec<Arc<Button>>;
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// CONFIGURATION DEFINITION
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// CONFIGURATION
 #[derive(Deserialize, Debug)]
@@ -64,6 +69,94 @@ fn new_hashmap() -> HashMap<String, String> {
     HashMap::new()
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// BUTTON CONFIGURATION ERRORS
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Debug)]
+pub enum ButtonConfigError {
+    /// (Key, Expected)
+    WrongType(String, &'static str),
+    /// A general error which gets directly outputed to the user
+    General(String),
+}
+
+impl Display for ButtonConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ButtonConfigError::WrongType(key, expected) => {
+                write!(
+                    formatter,
+                    "Expected value of type {expected} in option \"{key}\"."
+                )
+            }
+            ButtonConfigError::General(message) => {
+                write!(formatter, "{message}")
+            }
+        }
+    }
+}
+
+/// See [parse_button_config()]
+pub enum ParseButtonConfigResult<T: FromStr> {
+    Found(T),
+    NotFound(T),
+    ParseError(ButtonConfigError),
+}
+
+impl<T: FromStr> ParseButtonConfigResult<T> {
+    /// instead of the enum return Result<Value, ButtonConfigError>.
+    ///
+    /// [ParseButtonConfigResult::Found] || [ParseButtonConfigResult::NotFound] => Ok(value)
+    /// [ParseButtonConfigResult::ParseError] => Err(e)
+    pub fn res(self) -> Result<T, ButtonConfigError> {
+        match self {
+            ParseButtonConfigResult::Found(v) | ParseButtonConfigResult::NotFound(v) => Ok(v),
+            ParseButtonConfigResult::ParseError(e) => Err(e),
+        }
+    }
+}
+
+impl Button {
+    /// reads a key from the config and parses the config in the given type
+    ///
+    /// # Return
+    ///
+    /// - ParseButtonConfigResult::Found(value) -> returns the value found in the configuration; value is
+    /// parsing result
+    /// - ParseButtonConfigResult::NotFound(value) -> the key was not found in the configuration; value
+    /// is 'if_wrong_type'
+    /// - ParseButtonConfigResult::ParseError(error) -> the value could not be parsed; error is
+    /// [ButtonConfigError::WrongType]
+    pub fn parse_module<T>(&self, key: &'static str, if_wrong_type: T) -> ParseButtonConfigResult<T>
+    where
+        T: PrettyPrint + FromStr,
+    {
+        // try to find value or return None
+        let parse_result = match self.options.get(key) {
+            Some(value) => value.parse::<T>(),
+            _ => return ParseButtonConfigResult::NotFound(if_wrong_type),
+        };
+        // check if value could be parsed
+        if let Ok(out) = parse_result {
+            return ParseButtonConfigResult::Found(out);
+        }
+        ParseButtonConfigResult::ParseError(ButtonConfigError::WrongType(
+            key.to_string(),
+            if_wrong_type.pprint(),
+        ))
+    }
+
+    /// Just retrieve the raw string from a key without trying to parse the value
+    pub fn raw_module(&self, key: &String) -> Option<&String> {
+        self.options.get(key)
+    }
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// PARSING CONFIG
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 #[tracing::instrument]
 pub fn load_config() -> Result<Config, ConfigError> {
     let config_file: PathBuf = match env::var_os("DACH_DECKER_CONFIG") {
@@ -100,6 +193,11 @@ pub fn load_config() -> Result<Config, ConfigError> {
     }
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// OVERALL CONFIGURATION ERRORS
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// General error for parsing the configuration
 #[derive(Debug)]
 pub enum ConfigError {
     ButtonDoesNotExist(u8),

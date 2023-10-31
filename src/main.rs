@@ -1,16 +1,16 @@
-use crate::config::{Config, DeviceConfig, GlobalConfig};
+use crate::config::{Config, DeviceConfig};
 use deck_driver as streamdeck;
 use device::Device;
-use font_loader::system_fonts::{FontProperty, FontPropertyBuilder};
+use font_loader::system_fonts::FontPropertyBuilder;
 use hidapi::HidApi;
 use rusttype::Font;
 use std::{
     collections::HashMap,
     process::exit,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, OnceLock},
     time::Duration,
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::{
     self, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
@@ -19,7 +19,9 @@ use config::{load_config, Space};
 
 mod config;
 mod device;
+mod image_rendering;
 mod modules;
+mod type_definition;
 
 pub static GLOBAL_FONT: OnceLock<Font> = OnceLock::new();
 
@@ -109,17 +111,6 @@ pub async fn start(config: Config, mut hid: HidApi) {
     let mut ignore_devices: Vec<String> = Vec::new();
 
     loop {
-        // check for devices that can be removed
-        /* let mut removable_devices = Vec::new();
-        for (key, device) in &devices {
-            if device.is_dropped() {
-                removable_devices.push(key.to_owned());
-            }
-        }
-        for d in removable_devices {
-            devices.remove(&d);
-        }*/
-
         // refresh device list
         if let Err(e) = streamdeck::refresh_device_list(&mut hid) {
             warn!("Cannot fetch new devices: {}", e);
