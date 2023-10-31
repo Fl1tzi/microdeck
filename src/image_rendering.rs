@@ -57,7 +57,7 @@ impl Default for ImageBuilder {
             // will get changed
             width: 0,
             scale: 60.0,
-            font_size: 15.0,
+            font_size: 16.0,
             text: None,
             image: None,
         }
@@ -133,7 +133,7 @@ impl ImageBuilder {
     }
 }
 
-// Component that just displays an image
+/// Component that just displays an image
 struct ImageComponent {
     height: usize,
     width: usize,
@@ -165,7 +165,7 @@ impl Component for ImageComponent {
     }
 }
 
-// Component that just displays text
+/// Component that just displays text
 struct TextComponent {
     height: usize,
     width: usize,
@@ -203,7 +203,7 @@ impl Component for TextComponent {
     }
 }
 
-// Component that displays image and text
+/// Component that displays image and text
 struct ImageTextComponent {
     height: usize,
     width: usize,

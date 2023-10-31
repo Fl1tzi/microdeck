@@ -29,8 +29,9 @@ pub enum HostEvent {
     ButtonReleased,
 }
 
+pub type ModuleObject = Box<dyn Module + Send + Sync>;
 pub type ModuleFuture =
-    Pin<Box<dyn Future<Output = Result<Box<dyn Module + Sync + Send>, ButtonConfigError>> + Send>>;
+    Pin<Box<dyn Future<Output = Result<ModuleObject, ButtonConfigError>> + Send>>;
 pub type ModuleInitFunction = fn(Arc<Button>) -> ModuleFuture;
 
 pub fn retrieve_module_from_name(name: &str) -> Option<ModuleInitFunction> {
@@ -119,7 +120,6 @@ impl DeviceAccess {
 
 pub type ReturnError = Box<dyn Error + Send + Sync>;
 pub type ChannelReceiver = mpsc::Receiver<HostEvent>;
-pub type ModuleObject = Box<dyn Module + Send + Sync>;
 
 #[async_trait]
 /// An object safe module trait.
