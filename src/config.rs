@@ -77,6 +77,8 @@ fn new_hashmap() -> HashMap<String, String> {
 pub enum ButtonConfigError {
     /// (Key, Expected)
     WrongType(String, &'static str),
+    /// a required value
+    Required(&'static str),
     /// A general error which gets directly outputed to the user
     General(String),
 }
@@ -90,6 +92,9 @@ impl Display for ButtonConfigError {
                     "Expected value of type {expected} in option \"{key}\"."
                 )
             }
+            ButtonConfigError::Required(key) => {
+                write!(formatter, "A value for the option \"{key}\" is required.")
+            }
             ButtonConfigError::General(message) => {
                 write!(formatter, "{message}")
             }
@@ -99,19 +104,35 @@ impl Display for ButtonConfigError {
 
 /// See [parse_button_config()]
 pub enum ParseButtonConfigResult<T: FromStr> {
-    Found(T),
-    NotFound(T),
+    /// (user-defined value, key)
+    Found(T, &'static str),
+    /// (alternative value, key)
+    NotFound(T, &'static str),
     ParseError(ButtonConfigError),
 }
 
 impl<T: FromStr> ParseButtonConfigResult<T> {
     /// instead of the enum return Result<Value, ButtonConfigError>.
     ///
-    /// [ParseButtonConfigResult::Found] || [ParseButtonConfigResult::NotFound] => Ok(value)
+    /// [ParseButtonConfigResult::Found] | [ParseButtonConfigResult::NotFound] => Ok(value)
     /// [ParseButtonConfigResult::ParseError] => Err(e)
     pub fn res(self) -> Result<T, ButtonConfigError> {
         match self {
-            ParseButtonConfigResult::Found(v) | ParseButtonConfigResult::NotFound(v) => Ok(v),
+            ParseButtonConfigResult::Found(v, _) | ParseButtonConfigResult::NotFound(v, _) => Ok(v),
+            ParseButtonConfigResult::ParseError(e) => Err(e),
+        }
+    }
+
+    /// instead of the enum return Result<Value, ButtonConfigError>
+    ///
+    /// This makes a user-defined value required.
+    ///
+    /// [ParseButtonConfigResult::Found] => Ok(value)
+    /// [ParseButtonConfigResult::NotFound] | [ParseButtonConfigResult::ParseError] => Err(e)
+    pub fn required(self) -> Result<T, ButtonConfigError> {
+        match self {
+            ParseButtonConfigResult::Found(v, _) => Ok(v),
+            ParseButtonConfigResult::NotFound(_, k) => Err(ButtonConfigError::Required(k)),
             ParseButtonConfigResult::ParseError(e) => Err(e),
         }
     }
@@ -135,11 +156,11 @@ impl Button {
         // try to find value or return None
         let parse_result = match self.options.get(key) {
             Some(value) => value.parse::<T>(),
-            _ => return ParseButtonConfigResult::NotFound(if_wrong_type),
+            _ => return ParseButtonConfigResult::NotFound(if_wrong_type, key),
         };
         // check if value could be parsed
         if let Ok(out) = parse_result {
-            return ParseButtonConfigResult::Found(out);
+            return ParseButtonConfigResult::Found(out, key);
         }
         ParseButtonConfigResult::ParseError(ButtonConfigError::WrongType(
             key.to_string(),

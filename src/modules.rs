@@ -1,17 +1,19 @@
 mod blank;
 mod counter;
+mod image;
 mod space;
 
 // modules
 use self::counter::Counter;
+use self::image::Image;
 use self::space::Space;
 
 // other things
 use crate::config::{Button, ButtonConfigError};
+use ::image::DynamicImage;
 use async_trait::async_trait;
 pub use deck_driver as streamdeck;
 use futures_util::Future;
-use image::DynamicImage;
 use std::{error::Error, pin::Pin, sync::Arc};
 use streamdeck::info::ImageFormat;
 use streamdeck::info::Kind;
@@ -38,6 +40,7 @@ pub fn retrieve_module_from_name(name: &str) -> Option<ModuleInitFunction> {
     match name {
         "space" => Some(Space::init as ModuleInitFunction),
         "counter" => Some(Counter::init as ModuleInitFunction),
+        "image" => Some(Image::init as ModuleInitFunction),
         _ => None,
     }
 }
