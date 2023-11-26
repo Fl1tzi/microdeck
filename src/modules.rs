@@ -10,6 +10,9 @@ use self::space::Space;
 
 // other things
 use crate::config::{Button, ButtonConfigError};
+use crate::device::ImageCache;
+use crate::image_rendering::load_image;
+use ::image::imageops::FilterType;
 use ::image::DynamicImage;
 use async_trait::async_trait;
 pub use deck_driver as streamdeck;
@@ -19,8 +22,8 @@ use streamdeck::info::ImageFormat;
 use streamdeck::info::Kind;
 use streamdeck::AsyncStreamDeck;
 use streamdeck::StreamDeckError;
-use tokio::sync::mpsc;
-use tracing::{debug, error};
+use tokio::sync::{mpsc, Mutex};
+use tracing::{debug, error, trace};
 
 /// Events that are coming from the host
 #[derive(Clone, Copy, Debug)]
@@ -34,7 +37,7 @@ pub enum HostEvent {
 pub type ModuleObject = Box<dyn Module + Send + Sync>;
 pub type ModuleFuture =
     Pin<Box<dyn Future<Output = Result<ModuleObject, ButtonConfigError>> + Send>>;
-pub type ModuleInitFunction = fn(Arc<Button>) -> ModuleFuture;
+pub type ModuleInitFunction = fn(Arc<Button>, ModuleCache) -> ModuleFuture;
 
 pub fn retrieve_module_from_name(name: &str) -> Option<ModuleInitFunction> {
     match name {
@@ -54,14 +57,20 @@ pub async fn start_module(
     module_init_function: ModuleInitFunction,
     device: Arc<AsyncStreamDeck>,
     br: ChannelReceiver,
+    image_cache: Arc<Mutex<ImageCache>>,
 ) {
     debug!("STARTED");
+    let mc = ModuleCache::new(
+        image_cache,
+        button.index,
+        device.kind().key_image_format().size,
+    );
     let da = DeviceAccess::new(device, button.index).await;
 
     // run init first
     //
     // panic should be prevented by the config being checked before running
-    let mut module = match module_init_function(button).await {
+    let mut module = match module_init_function(button, mc).await {
         Ok(m) => m,
         Err(e) => panic!("{}", e),
     };
@@ -70,6 +79,65 @@ pub async fn start_module(
     match module.run(da, br).await {
         Ok(_) => debug!("RETURNED"),
         Err(e) => error!("RETURNED_ERROR: {}", e),
+    }
+}
+
+/// A wrapper around [ImageCache] to provide easy access to values in the device cache
+pub struct ModuleCache {
+    image_cache: Arc<Mutex<ImageCache>>,
+    button_index: u8,
+    /// Resolution of the deck (required for optimization of storage space)
+    resolution: (usize, usize),
+}
+
+impl ModuleCache {
+    pub fn new(
+        image_cache: Arc<Mutex<ImageCache>>,
+        button_index: u8,
+        resolution: (usize, usize),
+    ) -> Self {
+        ModuleCache {
+            image_cache,
+            button_index,
+            resolution,
+        }
+    }
+
+    /// Load an image from the [ImageCache] or create a new one and insert it into the [ImageCache].
+    /// Returns None if no image was found.
+    ///
+    /// index: Provide an index where your data is cached. With this number the value can be
+    /// accessed again. Use [DeviceAccess::get_image_cached()] for just getting the data.
+    #[allow(dead_code)]
+    pub async fn load_image(&mut self, path: String, index: u32) -> Option<Arc<DynamicImage>> {
+        if let Some(image) = self.get_image(index).await {
+            Some(image)
+        } else {
+            trace!("Decoding image");
+            let mut image = tokio::task::spawn_blocking(move || load_image(path))
+                .await
+                .unwrap()
+                .ok()?;
+            image = image.resize_exact(
+                self.resolution.0 as u32,
+                self.resolution.1 as u32,
+                FilterType::Nearest,
+            );
+            trace!("Decoding finished");
+            let image = Arc::new(image);
+            let mut data = self.image_cache.lock().await;
+            data.put((self.button_index, index), image.clone());
+            trace!("Wrote data into cache (new size: {})", data.len());
+            drop(data);
+            Some(image.into())
+        }
+    }
+
+    /// Just try to retrieve a value from the key (index) in the [ImageCache].
+    #[allow(dead_code)]
+    pub async fn get_image(&self, index: u32) -> Option<Arc<DynamicImage>> {
+        let mut data = self.image_cache.lock().await;
+        data.get(&(self.button_index, index)).cloned()
     }
 }
 
@@ -130,7 +198,10 @@ pub type ChannelReceiver = mpsc::Receiver<HostEvent>;
 /// - init() -> function for checking config and creating module
 /// - run() -> function that happens when the device actually runs
 pub trait Module: Sync + Send {
-    async fn init(config: Arc<Button>) -> Result<ModuleObject, ButtonConfigError>
+    async fn init(
+        config: Arc<Button>,
+        mut cache: ModuleCache,
+    ) -> Result<ModuleObject, ButtonConfigError>
     where
         Self: Sized;
     async fn run(

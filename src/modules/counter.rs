@@ -3,7 +3,8 @@ use std::sync::Arc;
 use crate::config::Button;
 
 use super::{
-    ButtonConfigError, ChannelReceiver, DeviceAccess, HostEvent, Module, ModuleObject, ReturnError,
+    ButtonConfigError, ChannelReceiver, DeviceAccess, HostEvent, Module, ModuleCache, ModuleObject,
+    ReturnError,
 };
 
 use crate::GLOBAL_FONT;
@@ -22,7 +23,10 @@ pub struct Counter {
 
 #[async_trait]
 impl Module for Counter {
-    async fn init(config: Arc<Button>) -> Result<ModuleObject, ButtonConfigError> {
+    async fn init(
+        config: Arc<Button>,
+        _cache: ModuleCache,
+    ) -> Result<ModuleObject, ButtonConfigError> {
         let title = config.parse_module("TITLE", " ".to_string()).res()?;
         let title_size = config.parse_module("TITLE_SIZE", 15.0).res()?;
         let number_size = config.parse_module("NUMBER_SIZE", 25.0).res()?;

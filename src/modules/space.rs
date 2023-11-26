@@ -3,6 +3,7 @@ use super::ButtonConfigError;
 use super::ChannelReceiver;
 use super::DeviceAccess;
 use super::Module;
+use super::ModuleCache;
 use super::ModuleObject;
 use super::ReturnError;
 use crate::image_rendering::{create_error_image, ImageBuilder};
@@ -16,7 +17,10 @@ pub struct Space {
 
 #[async_trait]
 impl Module for Space {
-    async fn init(config: Arc<Button>) -> Result<ModuleObject, ButtonConfigError> {
+    async fn init(
+        config: Arc<Button>,
+        _cache: ModuleCache,
+    ) -> Result<ModuleObject, ButtonConfigError> {
         let name = config.parse_module("NAME", "Unknown".to_string()).res()?;
         Ok(Box::new(Space { name }))
     }

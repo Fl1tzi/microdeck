@@ -3,9 +3,11 @@ use crate::{
     modules::{retrieve_module_from_name, start_module, HostEvent},
     unwrap_or_error,
 };
+use clru::CLruCache;
 use deck_driver as streamdeck;
 use hidapi::HidApi;
-use std::{collections::HashMap, fmt::Display, sync::Arc};
+use image::DynamicImage;
+use std::{collections::HashMap, fmt::Display, num::NonZeroUsize, sync::Arc};
 use streamdeck::{
     asynchronous::{AsyncStreamDeck, ButtonStateUpdate},
     info::Kind,
@@ -14,7 +16,10 @@ use streamdeck::{
 use tokio::{
     process::Command,
     runtime::Runtime,
-    sync::mpsc::{self, error::TrySendError},
+    sync::{
+        mpsc::{self, error::TrySendError},
+        Mutex,
+    },
 };
 use tracing::{debug, error, info_span, trace, warn};
 
@@ -41,6 +46,11 @@ impl Display for Device {
     }
 }
 
+/// image cache
+///
+/// (button, key), image data
+pub type ImageCache = CLruCache<(u8, u32), Arc<DynamicImage>>;
+
 /// Handles everything related to a single device
 pub struct Device {
     modules: HashMap<u8, ModuleController>,
@@ -50,6 +60,7 @@ pub struct Device {
     spaces: Arc<HashMap<String, Space>>,
     selected_space: Option<String>,
     serial: String,
+    image_cache: Arc<Mutex<ImageCache>>,
 }
 
 impl Device {
@@ -90,6 +101,9 @@ impl Device {
             spaces,
             selected_space: None,
             serial,
+            image_cache: Arc::new(Mutex::new(CLruCache::new(
+                NonZeroUsize::new(button_count.into()).unwrap(),
+            ))),
         })
     }
 
@@ -130,9 +144,11 @@ impl Device {
                 let ser = self.serial.clone();
                 let dev = self.device.clone();
                 let b = btn.clone();
+                let image_cache = self.image_cache.clone();
 
-                runtime
-                    .spawn(async move { start_module(ser, b, module, dev, module_receiver).await });
+                runtime.spawn(async move {
+                    start_module(ser, b, module, dev, module_receiver, image_cache).await
+                });
             }
             // if the receiver already dropped the listener then just directly insert none.
             // Optimizes performance because the key_listener just does not try to send the event.
