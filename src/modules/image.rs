@@ -18,12 +18,12 @@ pub struct Image {
 
 #[async_trait]
 impl Module for Image {
-    async fn init(
+    async fn new(
         config: Arc<Button>,
         mut cache: ModuleCache,
     ) -> Result<ModuleObject, ButtonConfigError> {
-        let path = config.parse_module("PATH", String::new()).required()?;
-        let scale = config.parse_module("SCALE", 100.0).res()?;
+        let path = config.parse_module("path", String::new()).required()?;
+        let scale = config.parse_module("scale", 100.0).res()?;
 
         let image = cache
             .load_image(path, 1)

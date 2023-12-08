@@ -254,7 +254,7 @@ impl Device {
         }
         // switch space if needed
         if options.0.module == "space" {
-            let name = match options.0.options.get("NAME") {
+            let name = match options.0.options.get("name") {
                 Some(n) => n.clone(),
                 None => return,
             };

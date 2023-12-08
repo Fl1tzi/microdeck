@@ -19,22 +19,25 @@ pub struct Counter {
     title: String,
     title_size: f32,
     number_size: f32,
+    increment: u32
 }
 
 #[async_trait]
 impl Module for Counter {
-    async fn init(
+    async fn new(
         config: Arc<Button>,
         _cache: ModuleCache,
     ) -> Result<ModuleObject, ButtonConfigError> {
-        let title = config.parse_module("TITLE", " ".to_string()).res()?;
-        let title_size = config.parse_module("TITLE_SIZE", 15.0).res()?;
-        let number_size = config.parse_module("NUMBER_SIZE", 25.0).res()?;
+        let title = config.parse_module("title", " ".to_string()).res()?;
+        let title_size = config.parse_module("title_size", 15.0).res()?;
+        let number_size = config.parse_module("number_size", 25.0).res()?;
+        let increment = config.parse_module("increment", 1).res()?;
 
         Ok(Box::new(Counter {
             title,
             title_size,
             number_size,
+            increment
         }))
     }
 
@@ -64,7 +67,7 @@ impl Module for Counter {
                 match event {
                     HostEvent::ButtonPressed => {
                         // just return to zero if u32 MAX is reached
-                        counter = counter.checked_add(1).unwrap_or(0);
+                        counter = counter.checked_add(self.increment).unwrap_or(0);
                         let image = render_text(
                             &streamdeck,
                             &self.title,

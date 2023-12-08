@@ -17,11 +17,11 @@ pub struct Space {
 
 #[async_trait]
 impl Module for Space {
-    async fn init(
+    async fn new(
         config: Arc<Button>,
         _cache: ModuleCache,
     ) -> Result<ModuleObject, ButtonConfigError> {
-        let name = config.parse_module("NAME", "Unknown".to_string()).res()?;
+        let name = config.parse_module("name", "Unknown".to_string()).res()?;
         Ok(Box::new(Space { name }))
     }
 

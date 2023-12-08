@@ -41,9 +41,9 @@ pub type ModuleInitFunction = fn(Arc<Button>, ModuleCache) -> ModuleFuture;
 
 pub fn retrieve_module_from_name(name: &str) -> Option<ModuleInitFunction> {
     match name {
-        "space" => Some(Space::init as ModuleInitFunction),
-        "counter" => Some(Counter::init as ModuleInitFunction),
-        "image" => Some(Image::init as ModuleInitFunction),
+        "space" => Some(Space::new as ModuleInitFunction),
+        "counter" => Some(Counter::new as ModuleInitFunction),
+        "image" => Some(Image::new as ModuleInitFunction),
         _ => None,
     }
 }
@@ -193,17 +193,19 @@ pub type ReturnError = Box<dyn Error + Send + Sync>;
 pub type ChannelReceiver = mpsc::Receiver<HostEvent>;
 
 #[async_trait]
-/// An object safe module trait.
-///
-/// - init() -> function for checking config and creating module
-/// - run() -> function that happens when the device actually runs
+/// An object safe module Trait for representing a single Module.
 pub trait Module: Sync + Send {
-    async fn init(
+    /// Function for validating configuration and creating module instance. Every time the config
+    /// is checked this function gets called. It therefore should validate the most efficient
+    /// things first.
+    async fn new(
         config: Arc<Button>,
         mut cache: ModuleCache,
     ) -> Result<ModuleObject, ButtonConfigError>
     where
         Self: Sized;
+    /// Function for actually running the module and interacting with the device. Errors that
+    /// happen here should be mostly prevented.
     async fn run(
         &mut self,
         device: DeviceAccess,

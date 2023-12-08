@@ -13,7 +13,7 @@ pub struct Blank;
 
 #[async_trait]
 impl Module for Blank {
-    async fn init(
+    async fn new(
         _config: Arc<Button>,
         _cache: ModuleCache,
     ) -> Result<ModuleObject, ButtonConfigError> {

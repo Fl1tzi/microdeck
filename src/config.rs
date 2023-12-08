@@ -180,7 +180,7 @@ impl Button {
 
 #[tracing::instrument]
 pub fn load_config() -> Result<Config, ConfigError> {
-    let config_file: PathBuf = match env::var_os("DACH_DECKER_CONFIG") {
+    let config_file: PathBuf = match env::var_os("MICRODECK_CONFIG") {
         Some(path) => {
             debug!("Using env variable: {:?}", path);
             PathBuf::from(path)
