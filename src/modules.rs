@@ -121,7 +121,7 @@ impl ModuleCache {
             image = image.resize_exact(
                 self.resolution.0 as u32,
                 self.resolution.1 as u32,
-                FilterType::Nearest,
+                FilterType::Lanczos3,
             );
             trace!("Decoding finished");
             let image = Arc::new(image);
