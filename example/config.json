@@ -1,0 +1,41 @@
+{
+  "global": {},
+  "devices": [
+    {
+      "serial": "*",
+      "buttons": [
+        {
+          "index": 1,
+          "module": "counter",
+          "options": {
+            "font_size": "20",
+            "title": "Test\ntest",
+            "increment": "500"
+          }
+        },
+        {
+          "index": 0,
+          "module": "space",
+          "options": {
+            "name": "folder1"
+          }
+        }
+      ]
+    }
+  ],
+  "spaces": {
+    "folder1": [
+      {
+        "index": 1,
+        "module": "space",
+        "options": {
+          "name": "home"
+        }
+      },
+      {
+        "index": 2,
+        "module": "counter"
+      }
+    ]
+  }
+}

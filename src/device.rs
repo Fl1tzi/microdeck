@@ -59,6 +59,7 @@ pub struct Device {
     config: DeviceConfig,
     spaces: Arc<HashMap<String, Space>>,
     selected_space: Option<String>,
+    is_dead_handle: Arc<std::sync::Mutex<bool>>,
     serial: String,
     image_cache: Arc<Mutex<ImageCache>>,
 }
@@ -68,6 +69,7 @@ impl Device {
         serial: String,
         kind: Kind,
         device_conf: DeviceConfig,
+        is_dead_handle: Arc<std::sync::Mutex<bool>>,
         spaces: Arc<HashMap<String, Space>>,
         hid: &HidApi,
     ) -> Result<Device, DeviceError> {
@@ -100,6 +102,7 @@ impl Device {
             config: device_conf,
             spaces,
             selected_space: None,
+            is_dead_handle,
             serial,
             image_cache: Arc::new(Mutex::new(CLruCache::new(
                 NonZeroUsize::new(button_count.into()).unwrap(),
@@ -171,17 +174,25 @@ impl Device {
         self.serial.clone()
     }
 
-    /// shutdown the runtime and therefore kill all the modules
+    /// Shutdown the runtime and therefore kill all the modules and
+    /// note death in field [self.is_dead_handle].
     fn drop(&mut self) {
         if let Some(handle) = self.modules_runtime.take() {
             handle.shutdown_background();
         }
         self.modules = HashMap::new();
+        *self
+            .is_dead_handle
+            .lock()
+            .expect("Unable to lock Mutex to signal drop of device") = true;
     }
 
-    /// if this device holds any modules
-    pub fn has_modules(&self) -> bool {
-        !self.modules.is_empty()
+    /// shutdown the runtime and therefore kill all the modules.
+    fn shutdown_modules(&mut self) {
+        if let Some(handle) = self.modules_runtime.take() {
+            handle.shutdown_background();
+        }
+        self.modules = HashMap::new();
     }
 
     /// listener for button press changes on the device
@@ -217,7 +228,7 @@ impl Device {
         } else {
             self.selected_space = Some(name)
         }
-        self.drop();
+        self.shutdown_modules();
         for key in 0..self.device.kind().key_count() {
             self.device.clear_button_image(key).await.unwrap();
         }

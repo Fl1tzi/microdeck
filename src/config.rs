@@ -15,8 +15,10 @@ use std::{
 use tracing::debug;
 
 /// The name of the folder which holds the config
+pub const CONFIG_ENVIRONMENT_VARIABLE: &'static str = "MICRODECK_CONFIG";
 pub const CONFIG_FOLDER_NAME: &'static str = "microdeck";
 pub const CONFIG_FILE: &'static str = "config.json";
+pub const DEFAULT_DEVICE_REFRESH_CYCLE: u64 = 3;
 
 /// Combination of buttons acting as a folder which a device can switch to
 pub type Space = Vec<Arc<Button>>;
@@ -28,7 +30,7 @@ pub type Space = Vec<Arc<Button>>;
 /// CONFIGURATION
 #[derive(Deserialize, Debug)]
 pub struct Config {
-    pub global: Option<GlobalConfig>,
+    pub global: GlobalConfig,
     pub devices: Vec<DeviceConfig>,
     pub spaces: Arc<HashMap<String, Space>>,
 }
@@ -37,6 +39,13 @@ pub struct Config {
 #[derive(Deserialize, Debug)]
 pub struct GlobalConfig {
     pub font_family: Option<String>,
+    /// Seconds when new devices get detected
+    #[serde(default = "default_device_refresh_cycle")]
+    pub device_list_refresh_cycle: u64,
+}
+
+fn default_device_refresh_cycle() -> u64 {
+    DEFAULT_DEVICE_REFRESH_CYCLE
 }
 
 /// configuration of a single device with its default page
@@ -169,6 +178,7 @@ impl Button {
     }
 
     /// Just retrieve the raw string from a key without trying to parse the value
+    #[allow(dead_code)]
     pub fn raw_module(&self, key: &String) -> Option<&String> {
         self.options.get(key)
     }
@@ -180,7 +190,7 @@ impl Button {
 
 #[tracing::instrument]
 pub fn load_config() -> Result<Config, ConfigError> {
-    let config_file: PathBuf = match env::var_os("MICRODECK_CONFIG") {
+    let config_file: PathBuf = match env::var_os(CONFIG_ENVIRONMENT_VARIABLE) {
         Some(path) => {
             debug!("Using env variable: {:?}", path);
             PathBuf::from(path)

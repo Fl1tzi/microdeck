@@ -7,10 +7,11 @@ use rusttype::Font;
 use std::{
     collections::HashMap,
     process::exit,
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
+    thread,
     time::Duration,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::{
     self, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
 };
@@ -65,21 +66,14 @@ fn main() {
     };
 
     // load font
-    // TODO: make this prettier
-    let font = match config.global {
-        Some(ref g) => {
-            if let Some(family) = &g.font_family {
-                font_loader::system_fonts::get(
-                    &mut FontPropertyBuilder::new().family(family.as_str()).build(),
-                )
-                .unwrap_or_else(|| {
-                    warn!("Unable to load custom font");
-                    load_system_font()
-                })
-            } else {
-                load_system_font()
-            }
-        }
+    let font = match config.global.font_family {
+        Some(ref f) => font_loader::system_fonts::get(
+            &mut FontPropertyBuilder::new().family(f.as_str()).build(),
+        )
+        .unwrap_or_else(|| {
+            warn!("Unable to load custom font");
+            load_system_font()
+        }),
         None => load_system_font(),
     };
 
@@ -104,37 +98,71 @@ fn load_system_font() -> (Vec<u8>, i32) {
         .expect("Unable to load system monospace font. Please specify a custom font in the config.")
 }
 
-pub async fn start(config: Config, mut hid: HidApi) {
-    let mut devices: HashMap<String, Device> = HashMap::new();
+struct DeviceHandle<T> {
+    handle: tokio::task::JoinHandle<T>,
+    is_dead: Arc<Mutex<bool>>,
+}
+
+impl<T> DeviceHandle<T> {
+    fn new(handle: tokio::task::JoinHandle<T>, is_dead: Arc<Mutex<bool>>) -> Self {
+        DeviceHandle { handle, is_dead }
+    }
+    fn is_dead(&self) -> bool {
+        match self.is_dead.lock() {
+            Ok(guard) => *guard,
+            Err(_) => false,
+        }
+    }
+}
+
+async fn start(config: Config, mut hid: HidApi) {
+    let mut devices: HashMap<String, DeviceHandle<_>> = HashMap::new();
 
     // devices which are not configured anyways
     let mut ignore_devices: Vec<String> = Vec::new();
 
+    let refresh_cycle = Duration::from_secs(config.global.device_list_refresh_cycle);
+
     loop {
         // refresh device list
+        trace!("Refreshing device list");
         if let Err(e) = streamdeck::refresh_device_list(&mut hid) {
             warn!("Cannot fetch new devices: {}", e);
         } else {
             for hw_device in streamdeck::list_devices(&hid) {
-                // if the device is not ignored and device is not already started
-                if !ignore_devices.contains(&hw_device.1) && devices.get(&hw_device.1).is_none() {
-                    debug!("New device detected: {}", &hw_device.1);
-                    // match regex for device serial
+                // if the device is not already started or the device is
+                // dropped
+                if let Some(d) = devices.get(&hw_device.1) {
+                    if d.is_dead() {
+                        trace!("Removing dead device {}", &hw_device.1);
+                        d.handle.abort();
+                        devices.remove(&hw_device.1);
+                    } else {
+                        // ignore this device
+                        continue;
+                    }
+                }
+                if !ignore_devices.contains(&hw_device.1) {
+                    // TODO: match regex for device serial
                     if let Some(device_config) = config
                         .devices
                         .iter()
                         .find(|d| d.serial == hw_device.1 || d.serial == "*")
                     {
-                        // start the device and its listener
+                        // start the device and its functions
+                        let is_dead = Arc::new(Mutex::new(false));
                         if let Some(device) = start_device(
                             hw_device,
                             &hid,
                             device_config.clone(),
                             config.spaces.clone(),
+                            is_dead.clone(),
                         )
                         .await
                         {
-                            devices.insert(device.serial(), device);
+                            let serial = device.serial();
+                            let handle = tokio::spawn(init_device_functions(device));
+                            devices.insert(serial, DeviceHandle::new(handle, is_dead));
                         }
                     } else {
                         info!("The device {} is not configured.", hw_device.1);
@@ -143,24 +171,29 @@ pub async fn start(config: Config, mut hid: HidApi) {
                 }
             }
         }
-
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(refresh_cycle).await;
     }
 }
 
-/// Start a device by initially creating the [Device] and then starting all modules and listeners for that device
+/// Create [Device] modules and init listener
+async fn init_device_functions(device: Device) {
+    let mut device = device;
+    device.init_modules().await;
+    device.key_listener().await;
+}
+
+/// Start a device by initially creating the [Device]
 #[tracing::instrument(name = "device", skip_all, fields(serial = device.1))]
-pub async fn start_device(
+async fn start_device(
     device: (streamdeck::info::Kind, String),
     hid: &HidApi,
     device_config: DeviceConfig,
     spaces: Arc<HashMap<String, Space>>,
+    is_dead: Arc<Mutex<bool>>,
 ) -> Option<Device> {
-    match Device::new(device.1, device.0, device_config, spaces, &hid).await {
-        Ok(mut device) => {
+    match Device::new(device.1, device.0, device_config, is_dead, spaces, &hid).await {
+        Ok(device) => {
             info!("Connected");
-            device.init_modules().await;
-            device.key_listener().await;
             Some(device)
         }
         Err(e) => {

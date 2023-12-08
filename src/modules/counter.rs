@@ -19,7 +19,7 @@ pub struct Counter {
     title: String,
     title_size: f32,
     number_size: f32,
-    increment: u32
+    increment: u32,
 }
 
 #[async_trait]
@@ -37,7 +37,7 @@ impl Module for Counter {
             title,
             title_size,
             number_size,
-            increment
+            increment,
         }))
     }
 

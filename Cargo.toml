@@ -8,7 +8,6 @@ license = "MIT"
 hidapi = "2.2.0"
 deck-driver = { git = "https://codeberg.org/Fl1tzi/deck-driver.git", branch = "main", features = ["async"] }
 tokio = { version = "1", features = ["full"] }
-log = "0.4"
 dirs = "4.0.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
@@ -19,6 +18,5 @@ imageproc = "0.23.0"
 rusttype = "0.9.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-lazy_static = "1.4.0"
 font-loader = "0.11.0"
 clru = "0.6.1"
