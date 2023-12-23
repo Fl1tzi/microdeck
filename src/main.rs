@@ -8,7 +8,6 @@ use std::{
     collections::HashMap,
     process::exit,
     sync::{Arc, Mutex, OnceLock},
-    thread,
     time::Duration,
 };
 use tracing::{debug, error, info, trace, warn};

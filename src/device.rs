@@ -1,6 +1,6 @@
 use crate::{
     config::{Button, ConfigError, DeviceConfig, Space},
-    modules::{retrieve_module_from_name, start_module, HostEvent},
+    modules::{start_module, HostEvent, MODULE_REGISTRY},
     unwrap_or_error,
 };
 use clru::CLruCache;
@@ -141,7 +141,7 @@ impl Device {
             .as_ref()
             .expect("Runtime has to be created before module can be spawned");
         let (module_sender, module_receiver) = mpsc::channel(4);
-        if let Some(module) = retrieve_module_from_name(&btn.module) {
+        if let Some(module) = MODULE_REGISTRY.get_module(&btn.module) {
             {
                 // initialize the module
                 let ser = self.serial.clone();
@@ -150,7 +150,7 @@ impl Device {
                 let image_cache = self.image_cache.clone();
 
                 runtime.spawn(async move {
-                    start_module(ser, b, module, dev, module_receiver, image_cache).await
+                    start_module(ser, b, *module, dev, module_receiver, image_cache).await
                 });
             }
             // if the receiver already dropped the listener then just directly insert none.

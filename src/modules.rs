@@ -17,6 +17,8 @@ use ::image::DynamicImage;
 use async_trait::async_trait;
 pub use deck_driver as streamdeck;
 use futures_util::Future;
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::{error::Error, pin::Pin, sync::Arc};
 use streamdeck::info::ImageFormat;
 use streamdeck::info::Kind;
@@ -24,6 +26,8 @@ use streamdeck::AsyncStreamDeck;
 use streamdeck::StreamDeckError;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, trace};
+
+pub static MODULE_REGISTRY: Lazy<ModuleRegistry> = Lazy::new(|| ModuleRegistry::default());
 
 /// Events that are coming from the host
 #[derive(Clone, Copy, Debug)]
@@ -39,12 +43,34 @@ pub type ModuleFuture =
     Pin<Box<dyn Future<Output = Result<ModuleObject, ButtonConfigError>> + Send>>;
 pub type ModuleInitFunction = fn(Arc<Button>, ModuleCache) -> ModuleFuture;
 
-pub fn retrieve_module_from_name(name: &str) -> Option<ModuleInitFunction> {
-    match name {
-        "space" => Some(Space::new as ModuleInitFunction),
-        "counter" => Some(Counter::new as ModuleInitFunction),
-        "image" => Some(Image::new as ModuleInitFunction),
-        _ => None,
+pub type ModuleMap = HashMap<&'static str, ModuleInitFunction>;
+
+/// Registry of available modules
+pub struct ModuleRegistry {
+    modules: ModuleMap,
+}
+
+impl Default for ModuleRegistry {
+    fn default() -> Self {
+        let mut modules = ModuleMap::new();
+        modules.insert("space", Space::new as ModuleInitFunction);
+        modules.insert("image", Image::new as ModuleInitFunction);
+        modules.insert("counter", Counter::new as ModuleInitFunction);
+        ModuleRegistry { modules }
+    }
+}
+
+impl ModuleRegistry {
+    /// Retrieve a module from the registry
+    pub fn get_module(&self, name: &str) -> Option<&ModuleInitFunction> {
+        self.modules.get(name)
+    }
+
+    // TODO: Idk if the &&str will be fine in the future
+    /// List all available modules
+    #[allow(dead_code)]
+    pub fn list_modules(&self) -> Vec<&&str> {
+        self.modules.keys().collect()
     }
 }
 
@@ -67,9 +93,10 @@ pub async fn start_module(
     );
     let da = DeviceAccess::new(device, button.index).await;
 
-    // run init first
+    // init
     //
-    // panic should be prevented by the config being checked before running
+    // This function should be called after the config was checked,
+    // otherwise it will panic and the module wont be started.
     let mut module = match module_init_function(button, mc).await {
         Ok(m) => m,
         Err(e) => panic!("{}", e),
@@ -198,6 +225,9 @@ pub trait Module: Sync + Send {
     /// Function for validating configuration and creating module instance. Every time the config
     /// is checked this function gets called. It therefore should validate the most efficient
     /// things first.
+    ///
+    /// This function should **not** panic as the panic will not be catched and therefore would be
+    /// not noticed.
     async fn new(
         config: Arc<Button>,
         mut cache: ModuleCache,
@@ -206,6 +236,8 @@ pub trait Module: Sync + Send {
         Self: Sized;
     /// Function for actually running the module and interacting with the device. Errors that
     /// happen here should be mostly prevented.
+    ///
+    /// TODO: The return error is not sent anywhere and is just a panic
     async fn run(
         &mut self,
         device: DeviceAccess,
