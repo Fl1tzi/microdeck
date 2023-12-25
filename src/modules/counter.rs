@@ -7,6 +7,7 @@ use super::{
     ReturnError,
 };
 
+use crate::image_rendering::wrap_text;
 use crate::GLOBAL_FONT;
 use image::{DynamicImage, Rgb, RgbImage};
 use imageproc::drawing::draw_text_mut;
@@ -96,18 +97,19 @@ fn render_text(
 
     let scale = Scale::uniform(title_size);
     let font = &GLOBAL_FONT.get().unwrap();
-
     let v_metrics = font.v_metrics(scale);
     let height = (v_metrics.ascent - v_metrics.descent + v_metrics.line_gap).round() as i32;
 
-    // start at y = 10
-    let mut y_pos = 10;
+    let text = wrap_text(image.width(), scale, &title);
 
-    for line in title.split("\n") {
+    // start at y = 0
+    let mut y_pos = 0;
+
+    for line in text.split("\n") {
         draw_text_mut(
             &mut image,
             Rgb([255, 255, 255]),
-            10,
+            0,
             y_pos,
             Scale::uniform(title_size),
             &GLOBAL_FONT.get().unwrap(),
@@ -119,7 +121,7 @@ fn render_text(
     draw_text_mut(
         &mut image,
         Rgb([255, 255, 255]),
-        10,
+        0,
         y_pos,
         Scale::uniform(number_size),
         &GLOBAL_FONT.get().unwrap(),

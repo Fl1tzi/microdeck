@@ -11,7 +11,7 @@ use self::space::Space;
 // other things
 use crate::config::{Button, ButtonConfigError};
 use crate::device::ImageCache;
-use crate::image_rendering::load_image;
+use crate::image_rendering::{load_image, ImageBuilder};
 use ::image::imageops::FilterType;
 use ::image::DynamicImage;
 use async_trait::async_trait;
@@ -91,13 +91,13 @@ pub async fn start_module(
         button.index,
         device.kind().key_image_format().size,
     );
-    let da = DeviceAccess::new(device, button.index).await;
+    let da = DeviceAccess::new(device.clone(), button.index).await;
 
     // init
     //
     // This function should be called after the config was checked,
     // otherwise it will panic and the module wont be started.
-    let mut module = match module_init_function(button, mc).await {
+    let mut module = match module_init_function(button.clone(), mc).await {
         Ok(m) => m,
         Err(e) => panic!("{}", e),
     };
@@ -105,7 +105,19 @@ pub async fn start_module(
     // then run module
     match module.run(da, br).await {
         Ok(_) => debug!("RETURNED"),
-        Err(e) => error!("RETURNED_ERROR: {}", e),
+        // TODO: maybe find calculation for font size
+        // print error on display
+        Err(e) => {
+            error!("{e}");
+            let da = DeviceAccess::new(device, button.index).await;
+            let res = da.resolution();
+            let image = ImageBuilder::new(res.0, res.1)
+                .set_text(format!("E: {}", e))
+                .set_font_size(12.0)
+                .set_text_color([255, 0, 0])
+                .build();
+            da.write_img(image).await.unwrap();
+        }
     }
 }
 
@@ -236,8 +248,6 @@ pub trait Module: Sync + Send {
         Self: Sized;
     /// Function for actually running the module and interacting with the device. Errors that
     /// happen here should be mostly prevented.
-    ///
-    /// TODO: The return error is not sent anywhere and is just a panic
     async fn run(
         &mut self,
         device: DeviceAccess,

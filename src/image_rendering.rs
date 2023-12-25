@@ -46,6 +46,7 @@ pub struct ImageBuilder {
     scale: f32,
     font_size: f32,
     text: Option<String>,
+    text_color: [u8; 3],
     image: Option<DynamicImage>,
 }
 
@@ -59,6 +60,8 @@ impl Default for ImageBuilder {
             scale: 60.0,
             font_size: 16.0,
             text: None,
+            // black
+            text_color: [255, 255, 255],
             image: None,
         }
     }
@@ -93,6 +96,12 @@ impl ImageBuilder {
     }
 
     #[allow(dead_code)]
+    pub fn set_text_color(mut self, text_color: [u8; 3]) -> Self {
+        self.text_color = text_color;
+        self
+    }
+
+    #[allow(dead_code)]
     pub fn set_image(mut self, image: DynamicImage) -> Self {
         self.image = Some(image);
         self
@@ -108,6 +117,7 @@ impl ImageBuilder {
                 image: self.image.unwrap(),
                 scale: self.scale,
                 font_size: self.font_size,
+                text_color: self.text_color,
                 text: self.text.unwrap(),
             };
             return c.render();
@@ -116,6 +126,7 @@ impl ImageBuilder {
                 height: self.height,
                 width: self.width,
                 font_size: self.font_size,
+                text_color: self.text_color,
                 text,
             };
             return c.render();
@@ -170,6 +181,7 @@ struct TextComponent {
     height: usize,
     width: usize,
     font_size: f32,
+    text_color: [u8; 3],
     text: String,
 }
 
@@ -177,27 +189,10 @@ impl Component for TextComponent {
     fn render(&self) -> DynamicImage {
         let mut image = RgbImage::new(self.width as u32, self.height as u32);
 
-        let scale = Scale::uniform(self.font_size);
-        let font = &GLOBAL_FONT.get().unwrap();
+        let font_scale = Scale::uniform(self.font_size);
+        let text = wrap_text(self.height as u32, font_scale, &self.text);
 
-        let v_metrics = font.v_metrics(scale);
-        let height = (v_metrics.ascent - v_metrics.descent + v_metrics.line_gap).round() as i32;
-
-        // start at y = 10
-        let mut y_pos = 10;
-
-        for line in self.text.split("\n") {
-            draw_text_mut(
-                &mut image,
-                Rgb([255, 255, 255]),
-                10,
-                y_pos,
-                scale,
-                &GLOBAL_FONT.get().unwrap(),
-                &line,
-            );
-            y_pos += height;
-        }
+        draw_text_on_image(&text, &mut image, Rgb(self.text_color), font_scale);
 
         image::DynamicImage::ImageRgb8(image)
     }
@@ -210,6 +205,7 @@ struct ImageTextComponent {
     image: DynamicImage,
     scale: f32,
     font_size: f32,
+    text_color: [u8; 3],
     text: String,
 }
 
@@ -224,19 +220,9 @@ impl Component for ImageTextComponent {
 
         let mut base_image = RgbImage::new(self.height as u32, self.width as u32);
 
-        let font = &GLOBAL_FONT.get().unwrap();
         let font_scale = Scale::uniform(self.font_size);
-
-        // TODO: allow new line
-        draw_text_mut(
-            &mut base_image,
-            Rgb([255, 255, 255]),
-            0,
-            0,
-            font_scale,
-            font,
-            &self.text,
-        );
+        let text = wrap_text(self.height as u32, font_scale, &self.text);
+        draw_text_on_image(&text, &mut base_image, Rgb(self.text_color), font_scale);
         // position at the middle
         let free_space = self.width - image.width() as usize;
         // TODO: allow padding to be manually set
@@ -249,4 +235,38 @@ impl Component for ImageTextComponent {
 
         image::DynamicImage::ImageRgb8(base_image)
     }
+}
+
+fn draw_text_on_image(text: &String, image: &mut RgbImage, color: Rgb<u8>, font_scale: Scale) {
+    let font = &GLOBAL_FONT.get().unwrap();
+    let v_metrics = font.v_metrics(font_scale);
+
+    let line_height = (v_metrics.ascent - v_metrics.descent + v_metrics.line_gap).round() as i32;
+    let mut y_pos = 0;
+
+    for line in text.split('\n') {
+        draw_text_mut(image, color, 0, y_pos, font_scale, font, &line);
+        y_pos += line_height
+    }
+}
+
+/// This functions adds '\n' to the line endings. It does not wrap
+/// words but characters.
+pub fn wrap_text(max_width: u32, font_size: Scale, text: &String) -> String {
+    let font = &GLOBAL_FONT.get().unwrap();
+
+    let mut new_text: Vec<char> = Vec::new();
+    let mut line_size = 0.0;
+
+    for character in text.chars() {
+        let h_size = font.glyph(character).scaled(font_size).h_metrics();
+        let complete_width = h_size.advance_width + h_size.left_side_bearing;
+        if (line_size + complete_width) as u32 > max_width {
+            new_text.push('\n');
+            line_size = 0.0;
+        }
+        new_text.push(character);
+        line_size += h_size.advance_width + h_size.left_side_bearing;
+    }
+    String::from_iter(new_text)
 }
