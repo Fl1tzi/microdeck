@@ -5,14 +5,15 @@ with (import <nixpkgs> {});
 mkShell {
   # build deps
   nativeBuildInputs = [
-    pkgs.cmake
-    pkgs.pkg-config
+    cargo
+    cmake
+    pkg-config
   ];
 
   # runtime build deps
   buildInputs = [
-    pkgs.udev
-    pkgs.freetype
-    pkgs.expat
+    udev
+    freetype
+    expat
   ];
 }
