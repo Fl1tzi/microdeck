@@ -3,8 +3,7 @@ use std::sync::Arc;
 use crate::config::Button;
 
 use super::{
-    ButtonConfigError, ChannelReceiver, DeviceAccess, HostEvent, Module, ModuleCache, ModuleObject,
-    ReturnError,
+    ButtonConfigError, ChannelReceiver, DeviceAccess, HostEvent, Module, ModuleObject, ReturnError,
 };
 
 use crate::image_rendering::wrap_text;
@@ -25,10 +24,7 @@ pub struct Counter {
 
 #[async_trait]
 impl Module for Counter {
-    async fn new(
-        config: Arc<Button>,
-        _cache: ModuleCache,
-    ) -> Result<ModuleObject, ButtonConfigError> {
+    async fn new(config: Arc<Button>) -> Result<ModuleObject, ButtonConfigError> {
         let title = config.parse_module("title", " ".to_string()).res()?;
         let title_size = config.parse_module("title_size", 15.0).res()?;
         let number_size = config.parse_module("number_size", 25.0).res()?;

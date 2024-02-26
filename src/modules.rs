@@ -10,21 +10,24 @@ use self::space::Space;
 
 // other things
 use crate::config::{Button, ButtonConfigError};
-use crate::device::ImageCache;
-use crate::image_rendering::{load_image, ImageBuilder};
+use crate::image_rendering::{retrieve_image, ImageBuilder};
 use ::image::imageops::FilterType;
+use ::image::io::Reader as ImageReader;
 use ::image::DynamicImage;
 use async_trait::async_trait;
+use base64::engine::{general_purpose, Engine};
 pub use deck_driver as streamdeck;
+use dirs::cache_dir;
 use futures_util::Future;
 use once_cell::sync::Lazy;
+use ring::digest;
 use std::collections::HashMap;
-use std::{error::Error, pin::Pin, sync::Arc};
+use std::{error::Error, path::PathBuf, pin::Pin, sync::Arc};
 use streamdeck::info::ImageFormat;
 use streamdeck::info::Kind;
 use streamdeck::AsyncStreamDeck;
 use streamdeck::StreamDeckError;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tracing::{debug, error, trace};
 
 pub static MODULE_REGISTRY: Lazy<ModuleRegistry> = Lazy::new(|| ModuleRegistry::default());
@@ -41,7 +44,7 @@ pub enum HostEvent {
 pub type ModuleObject = Box<dyn Module + Send + Sync>;
 pub type ModuleFuture =
     Pin<Box<dyn Future<Output = Result<ModuleObject, ButtonConfigError>> + Send>>;
-pub type ModuleInitFunction = fn(Arc<Button>, ModuleCache) -> ModuleFuture;
+pub type ModuleInitFunction = fn(Arc<Button>) -> ModuleFuture;
 
 pub type ModuleMap = HashMap<&'static str, ModuleInitFunction>;
 
@@ -83,21 +86,15 @@ pub async fn start_module(
     module_init_function: ModuleInitFunction,
     device: Arc<AsyncStreamDeck>,
     br: ChannelReceiver,
-    image_cache: Arc<Mutex<ImageCache>>,
 ) {
     debug!("STARTED");
-    let mc = ModuleCache::new(
-        image_cache,
-        button.index,
-        device.kind().key_image_format().size,
-    );
     let da = DeviceAccess::new(device.clone(), button.index).await;
 
     // init
     //
     // This function should be called after the config was checked,
     // otherwise it will panic and the module wont be started.
-    let mut module = match module_init_function(button.clone(), mc).await {
+    let mut module = match module_init_function(button.clone()).await {
         Ok(m) => m,
         Err(e) => panic!("{}", e),
     };
@@ -121,63 +118,76 @@ pub async fn start_module(
     }
 }
 
-/// A wrapper around [ImageCache] to provide easy access to values in the device cache
-pub struct ModuleCache {
-    image_cache: Arc<Mutex<ImageCache>>,
-    button_index: u8,
-    /// Resolution of the deck (required for optimization of storage space)
-    resolution: (usize, usize),
+/// Loads an image from the system or retrieves it from the cache. If
+/// the provided image is not already in the cache it will be inserted.
+#[allow(dead_code)]
+pub async fn load_image(path: PathBuf, resolution: (usize, usize)) -> Option<DynamicImage> {
+    // hash the image
+    let mut image = tokio::task::spawn_blocking(move || retrieve_image(&path))
+        .await
+        .unwrap()
+        .ok()?;
+
+    let image_hash = hash_image(image.as_bytes());
+
+    if let Some(image) = get_image_from_cache(&image_hash, resolution) {
+        trace!("Cached image is available");
+        return Some(image);
+    }
+
+    let image = tokio::task::spawn_blocking(move || {
+        trace!("Resizing image");
+        image = image.resize_exact(
+            resolution.0 as u32,
+            resolution.1 as u32,
+            FilterType::Lanczos3,
+        );
+        trace!("Resizing finished");
+        let mut path = match cache_dir() {
+            Some(dir) => dir,
+            None => return None, // System does not provide cache
+        };
+        path.push("microdeck");
+        path.push(image_cache_file_name(&image_hash, resolution));
+        // let mut file = File::create(path);
+        // file.write_all(image.as_bytes());
+        // currently just ignore if saving is not possible
+        image.save(path).ok()?;
+        Some(image)
+    })
+    .await
+    .unwrap()?;
+    Some(image.into())
 }
 
-impl ModuleCache {
-    pub fn new(
-        image_cache: Arc<Mutex<ImageCache>>,
-        button_index: u8,
-        resolution: (usize, usize),
-    ) -> Self {
-        ModuleCache {
-            image_cache,
-            button_index,
-            resolution,
-        }
-    }
+/// File name for a cached image
+///
+/// `<hash>-<height>x<width>`
+pub fn image_cache_file_name(image_hash: &str, resolution: (usize, usize)) -> String {
+    format!("{}-{}x{}.png", image_hash, resolution.0, resolution.1)
+}
 
-    /// Load an image from the [ImageCache] or create a new one and insert it into the [ImageCache].
-    /// Returns None if no image was found.
-    ///
-    /// index: Provide an index where your data is cached. With this number the value can be
-    /// accessed again. Use [DeviceAccess::get_image_cached()] for just getting the data.
-    #[allow(dead_code)]
-    pub async fn load_image(&mut self, path: String, index: u32) -> Option<Arc<DynamicImage>> {
-        if let Some(image) = self.get_image(index).await {
-            Some(image)
-        } else {
-            trace!("Decoding image");
-            let mut image = tokio::task::spawn_blocking(move || load_image(path))
-                .await
-                .unwrap()
-                .ok()?;
-            image = image.resize_exact(
-                self.resolution.0 as u32,
-                self.resolution.1 as u32,
-                FilterType::Lanczos3,
-            );
-            trace!("Decoding finished");
-            let image = Arc::new(image);
-            let mut data = self.image_cache.lock().await;
-            data.put((self.button_index, index), image.clone());
-            trace!("Wrote data into cache (new size: {})", data.len());
-            drop(data);
-            Some(image.into())
-        }
-    }
+pub fn hash_image(data: &[u8]) -> String {
+    let mut context = digest::Context::new(&digest::SHA256);
+    context.update(data);
+    let hash = context.finish();
+    general_purpose::STANDARD.encode(hash)
+}
 
-    /// Just try to retrieve a value from the key (index) in the [ImageCache].
-    #[allow(dead_code)]
-    pub async fn get_image(&self, index: u32) -> Option<Arc<DynamicImage>> {
-        let mut data = self.image_cache.lock().await;
-        data.get(&(self.button_index, index)).cloned()
-    }
+/// Try to retrieve an image from the cache. Will return None if
+/// the image was not cached yet (or is not accessible)
+/// or if the system does not provide a [dirs::cache_dir].
+#[allow(dead_code)]
+pub fn get_image_from_cache(image_hash: &str, resolution: (usize, usize)) -> Option<DynamicImage> {
+    let mut path = match cache_dir() {
+        Some(dir) => dir,
+        None => return None, // System does not provide cache
+    };
+
+    path.push("microdeck");
+    path.push(image_cache_file_name(image_hash, resolution));
+
+    Some(ImageReader::open(path).ok()?.decode().ok()?)
 }
 
 /// Wrapper to provide easier access to the Deck
@@ -240,14 +250,11 @@ pub trait Module: Sync + Send {
     ///
     /// This function should **not** panic as the panic will not be catched and therefore would be
     /// not noticed.
-    async fn new(
-        config: Arc<Button>,
-        mut cache: ModuleCache,
-    ) -> Result<ModuleObject, ButtonConfigError>
+    async fn new(config: Arc<Button>) -> Result<ModuleObject, ButtonConfigError>
     where
         Self: Sized;
     /// Function for actually running the module and interacting with the device. Errors that
-    /// happen here should be mostly prevented.
+    /// happen here should be mostly prevented as they are not properly handled.
     async fn run(
         &mut self,
         device: DeviceAccess,

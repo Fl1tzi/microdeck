@@ -6,6 +6,7 @@ use hidapi::HidApi;
 use rusttype::Font;
 use std::{
     collections::HashMap,
+    fs,
     process::exit,
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
@@ -24,6 +25,7 @@ mod modules;
 mod type_definition;
 
 pub static GLOBAL_FONT: OnceLock<Font> = OnceLock::new();
+pub static CACHE_DIR: &'static str = "microdeck";
 
 #[macro_export]
 macro_rules! skip_if_none {
@@ -63,6 +65,14 @@ fn main() {
             exit(1)
         }
     };
+
+    // create cache dir
+    if let Some(mut path) = dirs::cache_dir() {
+        path.push(CACHE_DIR);
+        if path.exists() == false {
+            fs::create_dir(path).expect("Could not create cache directory");
+        }
+    }
 
     // load font
     let font = match config.global.font_family {

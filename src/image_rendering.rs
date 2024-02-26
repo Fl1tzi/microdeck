@@ -5,11 +5,13 @@ use image::imageops;
 use image::{io::Reader, DynamicImage, ImageBuffer, Rgb, RgbImage};
 use imageproc::drawing::draw_text_mut;
 use rusttype::Scale;
-use std::io;
+use std::{io, path::Path};
+use tracing::trace;
 
-/// Loads an image from a path
+/// Retrieve an image from a path
 #[allow(dead_code)]
-pub fn load_image(path: String) -> io::Result<DynamicImage> {
+pub fn retrieve_image(path: &Path) -> io::Result<DynamicImage> {
+    trace!("Retrieving image from filesystem");
     Ok(Reader::open(path)?
         .decode()
         .expect("Unable to decode image"))
