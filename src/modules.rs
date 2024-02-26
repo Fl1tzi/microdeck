@@ -135,6 +135,8 @@ pub async fn load_image(path: PathBuf, resolution: (usize, usize)) -> Option<Dyn
         return Some(image);
     }
 
+    // TODO prevent multiple buttons from resizing the same image at the same time (performance
+    // improvement)
     let image = tokio::task::spawn_blocking(move || {
         trace!("Resizing image");
         image = image.resize_exact(
@@ -149,9 +151,7 @@ pub async fn load_image(path: PathBuf, resolution: (usize, usize)) -> Option<Dyn
         };
         path.push("microdeck");
         path.push(image_cache_file_name(&image_hash, resolution));
-        // let mut file = File::create(path);
-        // file.write_all(image.as_bytes());
-        // currently just ignore if saving is not possible
+
         image.save(path).ok()?;
         Some(image)
     })
