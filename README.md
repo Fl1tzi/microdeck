@@ -6,7 +6,7 @@ This is a long term project. See [v0.1](https://codeberg.org/Fl1tzi/dach-decker/
 
 # Microdeck
 
-Microdeck is an open-source software designed for configuring Stream Decks with ease and versatility. It aims to address common pain points found in existing solutions by offering improved rendering speeds, greater customization options, and a focus on stability.
+Microdeck is an open-source software designed for configuring Stream Decks with ease and versatility. It aims to address common pain points found in existing solutions by offering improved rendering speeds, greater customization options, and a focus on stability. Other devices may be added in the future (see [driver](https://codeberg.org/Fl1tzi/deck-driver)) if needed. The only requirement is that the key layout is rectangular and that there are displays on the keys (otherwise other pieces of software would be more useful).
 
 ## Key features
 
