@@ -1,10 +1,6 @@
 use std::sync::Arc;
 
-use crate::config::Button;
-
-use super::{
-    ButtonConfigError, ChannelReceiver, DeviceAccess, HostEvent, Module, ModuleObject, ReturnError,
-};
+use super::prelude::*;
 
 use crate::image_rendering::wrap_text;
 use crate::GLOBAL_FONT;

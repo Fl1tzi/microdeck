@@ -1,12 +1,4 @@
-use super::load_image;
-use super::Button;
-use super::ButtonConfigError;
-use super::ChannelReceiver;
-use super::DeviceAccess;
-use super::Module;
-use super::ModuleObject;
-use super::ReturnError;
-use crate::image_rendering::ImageBuilder;
+use super::prelude::*;
 use async_trait::async_trait;
 use std::{path::PathBuf, sync::Arc};
 
@@ -38,9 +30,10 @@ impl Module for Image {
     ) -> Result<(), ReturnError> {
         let (h, w) = streamdeck.resolution();
         let img = ImageBuilder::new(h, w)
-            .set_image(load_image(self.path.clone(), (h, w)).await.unwrap())
+            .set_image(self.path.clone())
             .set_image_scale(self.scale)
-            .build();
+            .build()
+            .await;
         streamdeck.write_img(img).await.unwrap();
         Ok(())
     }

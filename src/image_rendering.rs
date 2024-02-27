@@ -1,11 +1,15 @@
 // multiple functions for rendering various images/buttons
 //
 use crate::GLOBAL_FONT;
+use async_trait::async_trait;
 use image::imageops;
 use image::{io::Reader, DynamicImage, ImageBuffer, Rgb, RgbImage};
 use imageproc::drawing::draw_text_mut;
 use rusttype::Scale;
-use std::{io, path::Path};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 use tracing::trace;
 
 /// Retrieve an image from a path
@@ -15,6 +19,137 @@ pub fn retrieve_image(path: &Path) -> io::Result<DynamicImage> {
     Ok(Reader::open(path)?
         .decode()
         .expect("Unable to decode image"))
+}
+
+pub mod cache {
+    use super::retrieve_image;
+    use base64::engine::{general_purpose, Engine};
+    use dirs::cache_dir;
+    use image::imageops::FilterType;
+    use image::io::Reader as ImageReader;
+    use image::DynamicImage;
+    use ring::digest;
+    use std::path::PathBuf;
+    use tracing::trace;
+
+    /// Loads an image from the system or retrieves it from the cache. If
+    /// the provided image is not already in the cache it will be inserted.
+    #[allow(dead_code)]
+    pub async fn load_image(path: PathBuf, resolution: (usize, usize)) -> Option<DynamicImage> {
+        // hash the image
+        let mut image = tokio::task::spawn_blocking(move || retrieve_image(&path))
+            .await
+            .unwrap()
+            .ok()?;
+
+        let image_hash = hash_image(image.as_bytes());
+
+        if let Some(image) = get_image_from_cache(&image_hash, resolution) {
+            trace!("Cached image is available");
+            return Some(image);
+        }
+
+        // TODO prevent multiple buttons from resizing the same image at the same time (performance
+        // improvement)
+        let image = tokio::task::spawn_blocking(move || {
+            trace!("Resizing image");
+            image = image.resize_exact(
+                resolution.0 as u32,
+                resolution.1 as u32,
+                FilterType::Lanczos3,
+            );
+            trace!("Resizing finished");
+            let mut path = match cache_dir() {
+                Some(dir) => dir,
+                None => return None, // System does not provide cache
+            };
+            path.push("microdeck");
+            path.push(image_cache_file_name(&image_hash, resolution));
+
+            image.save(path).ok()?;
+            Some(image)
+        })
+        .await
+        .unwrap()?;
+        Some(image.into())
+    }
+
+    /// Does the same thing as [load_image] but the images aspect ratio is preserved to fit in the specified resolution. Also see [image::DynamicImage::resize_to_fill]
+    // TODO: Duplicated code from load_image
+    pub async fn load_image_fill(
+        path: PathBuf,
+        resolution: (usize, usize),
+    ) -> Option<DynamicImage> {
+        // hash the image
+        let mut image = tokio::task::spawn_blocking(move || retrieve_image(&path))
+            .await
+            .unwrap()
+            .ok()?;
+
+        let image_hash = hash_image(image.as_bytes());
+
+        if let Some(image) = get_image_from_cache(&image_hash, resolution) {
+            trace!("Cached image is available");
+            return Some(image);
+        }
+
+        // TODO prevent multiple buttons from resizing the same image at the same time (performance
+        // improvement)
+        let image = tokio::task::spawn_blocking(move || {
+            trace!("Resizing image");
+            image = image.resize_to_fill(
+                resolution.0 as u32,
+                resolution.1 as u32,
+                FilterType::Lanczos3,
+            );
+            trace!("Resizing finished");
+            let mut path = match cache_dir() {
+                Some(dir) => dir,
+                None => return None, // System does not provide cache
+            };
+            path.push("microdeck");
+            path.push(image_cache_file_name(&image_hash, resolution));
+
+            image.save(path).ok()?;
+            Some(image)
+        })
+        .await
+        .unwrap()?;
+        Some(image.into())
+    }
+
+    /// File name for a cached image
+    ///
+    /// `<hash>-<height>x<width>`
+    pub fn image_cache_file_name(image_hash: &str, resolution: (usize, usize)) -> String {
+        format!("{}-{}x{}.png", image_hash, resolution.0, resolution.1)
+    }
+
+    pub fn hash_image(data: &[u8]) -> String {
+        let mut context = digest::Context::new(&digest::SHA256);
+        context.update(data);
+        let hash = context.finish();
+        general_purpose::STANDARD.encode(hash)
+    }
+
+    /// Try to retrieve an image from the cache. Will return None if
+    /// the image was not cached yet (or is not accessible)
+    /// or if the system does not provide a [dirs::cache_dir].
+    #[allow(dead_code)]
+    pub fn get_image_from_cache(
+        image_hash: &str,
+        resolution: (usize, usize),
+    ) -> Option<DynamicImage> {
+        let mut path = match cache_dir() {
+            Some(dir) => dir,
+            None => return None, // System does not provide cache
+        };
+
+        path.push("microdeck");
+        path.push(image_cache_file_name(image_hash, resolution));
+
+        Some(ImageReader::open(path).ok()?.decode().ok()?)
+    }
 }
 
 /// A red image which should represent an missing image or error
@@ -29,8 +164,9 @@ pub fn create_error_image() -> DynamicImage {
     DynamicImage::ImageRgb8(error_img)
 }
 
+#[async_trait]
 trait Component {
-    fn render(&self) -> DynamicImage;
+    async fn render(self) -> DynamicImage;
 }
 
 /// The ImageBuilder is an easy way to build images.
@@ -49,7 +185,7 @@ pub struct ImageBuilder {
     font_size: f32,
     text: Option<String>,
     text_color: [u8; 3],
-    image: Option<DynamicImage>,
+    image: Option<PathBuf>,
 }
 
 impl Default for ImageBuilder {
@@ -104,13 +240,13 @@ impl ImageBuilder {
     }
 
     #[allow(dead_code)]
-    pub fn set_image(mut self, image: DynamicImage) -> Self {
+    pub fn set_image(mut self, image: PathBuf) -> Self {
         self.image = Some(image);
         self
     }
 
     #[allow(dead_code)]
-    pub fn build(self) -> DynamicImage {
+    pub async fn build(self) -> DynamicImage {
         // cannot use "if let" here, because variables would be moved
         if self.text.is_some() && self.image.is_some() {
             let c = ImageTextComponent {
@@ -122,7 +258,7 @@ impl ImageBuilder {
                 text_color: self.text_color,
                 text: self.text.unwrap(),
             };
-            return c.render();
+            return c.render().await;
         } else if let Some(text) = self.text {
             let c = TextComponent {
                 height: self.height,
@@ -131,7 +267,7 @@ impl ImageBuilder {
                 text_color: self.text_color,
                 text,
             };
-            return c.render();
+            return c.render().await;
         } else if let Some(image) = self.image {
             let c = ImageComponent {
                 height: self.height,
@@ -139,7 +275,7 @@ impl ImageBuilder {
                 scale: self.scale,
                 image,
             };
-            return c.render();
+            return c.render().await;
         } else {
             return create_error_image();
         }
@@ -151,17 +287,18 @@ struct ImageComponent {
     height: usize,
     width: usize,
     scale: f32,
-    image: DynamicImage,
+    image: PathBuf,
 }
 
+#[async_trait]
 impl Component for ImageComponent {
-    fn render(&self) -> DynamicImage {
+    async fn render(self) -> DynamicImage {
         let new_h = (self.height as f32 * (self.scale * 0.01)) as u32;
         let new_w = (self.width as f32 * (self.scale * 0.01)) as u32;
 
-        let image = self
-            .image
-            .resize_to_fill(new_w, new_h, image::imageops::FilterType::Nearest);
+        let image = cache::load_image_fill(self.image, (new_h as usize, new_w as usize))
+            .await
+            .expect("Image not available");
 
         let mut base_image = RgbImage::new(self.height as u32, self.width as u32);
 
@@ -187,14 +324,20 @@ struct TextComponent {
     text: String,
 }
 
+#[async_trait]
 impl Component for TextComponent {
-    fn render(&self) -> DynamicImage {
-        let mut image = RgbImage::new(self.width as u32, self.height as u32);
+    async fn render(self) -> DynamicImage {
+        let image = RgbImage::new(self.width as u32, self.height as u32);
 
         let font_scale = Scale::uniform(self.font_size);
         let text = wrap_text(self.height as u32, font_scale, &self.text);
+        let text_color = Rgb(self.text_color);
 
-        draw_text_on_image(&text, &mut image, Rgb(self.text_color), font_scale);
+        let image = tokio::task::spawn_blocking(move || {
+            draw_text_on_image(text, image, text_color, font_scale)
+        })
+        .await
+        .unwrap();
 
         image::DynamicImage::ImageRgb8(image)
     }
@@ -204,27 +347,33 @@ impl Component for TextComponent {
 struct ImageTextComponent {
     height: usize,
     width: usize,
-    image: DynamicImage,
+    image: PathBuf,
     scale: f32,
     font_size: f32,
     text_color: [u8; 3],
     text: String,
 }
 
+#[async_trait]
 impl Component for ImageTextComponent {
-    fn render(&self) -> DynamicImage {
+    async fn render(self) -> DynamicImage {
         let new_h = (self.height as f32 * (self.scale * 0.01)) as u32;
         let new_w = (self.width as f32 * (self.scale * 0.01)) as u32;
 
-        let image = self
-            .image
-            .resize_to_fill(new_w, new_h, image::imageops::FilterType::Nearest);
+        let image = cache::load_image_fill(self.image, (new_h as usize, new_w as usize))
+            .await
+            .expect("Image not available");
 
-        let mut base_image = RgbImage::new(self.height as u32, self.width as u32);
+        let base_image = RgbImage::new(self.height as u32, self.width as u32);
 
         let font_scale = Scale::uniform(self.font_size);
         let text = wrap_text(self.height as u32, font_scale, &self.text);
-        draw_text_on_image(&text, &mut base_image, Rgb(self.text_color), font_scale);
+        let text_color = Rgb(self.text_color);
+        let mut base_image = tokio::task::spawn_blocking(move || {
+            draw_text_on_image(text, base_image, text_color, font_scale)
+        })
+        .await
+        .unwrap();
         // position at the middle
         let free_space = self.width - image.width() as usize;
         // TODO: allow padding to be manually set
@@ -239,7 +388,13 @@ impl Component for ImageTextComponent {
     }
 }
 
-fn draw_text_on_image(text: &String, image: &mut RgbImage, color: Rgb<u8>, font_scale: Scale) {
+fn draw_text_on_image(
+    text: String,
+    image: RgbImage,
+    color: Rgb<u8>,
+    font_scale: Scale,
+) -> RgbImage {
+    let mut image = image;
     let font = &GLOBAL_FONT.get().unwrap();
     let v_metrics = font.v_metrics(font_scale);
 
@@ -247,9 +402,10 @@ fn draw_text_on_image(text: &String, image: &mut RgbImage, color: Rgb<u8>, font_
     let mut y_pos = 0;
 
     for line in text.split('\n') {
-        draw_text_mut(image, color, 0, y_pos, font_scale, font, &line);
+        draw_text_mut(&mut image, color, 0, y_pos, font_scale, font, &line);
         y_pos += line_height
     }
+    image
 }
 
 /// This functions adds '\n' to the line endings. It does not wrap

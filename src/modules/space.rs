@@ -1,24 +1,21 @@
-use super::Button;
-use super::ButtonConfigError;
-use super::ChannelReceiver;
-use super::DeviceAccess;
-use super::Module;
-use super::ModuleObject;
-use super::ReturnError;
-use crate::image_rendering::{create_error_image, ImageBuilder};
+use super::prelude::*;
 use async_trait::async_trait;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// module to represent the switching of a space (just visual)
 pub struct Space {
     name: String,
+    path: PathBuf,
 }
 
 #[async_trait]
 impl Module for Space {
     async fn new(config: Arc<Button>) -> Result<ModuleObject, ButtonConfigError> {
         let name = config.parse_module("name", "Unknown".to_string()).res()?;
-        Ok(Box::new(Space { name }))
+        let path = config.parse_module("path", "".to_string()).required()?;
+        let path = PathBuf::from(path);
+        Ok(Box::new(Space { name, path }))
     }
 
     async fn run(
@@ -27,13 +24,13 @@ impl Module for Space {
         _button_receiver: ChannelReceiver,
     ) -> Result<(), ReturnError> {
         // let icon = load_image(&config).unwrap();
-        let icon = create_error_image();
 
         let res = streamdeck.resolution();
         let image = ImageBuilder::new(res.0, res.1)
-            .set_image(icon)
+            .set_image(self.path.clone())
             .set_text(self.name.clone())
-            .build();
+            .build()
+            .await;
 
         streamdeck.write_img(image).await.unwrap();
         Ok(())

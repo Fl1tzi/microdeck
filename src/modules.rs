@@ -10,25 +10,27 @@ use self::space::Space;
 
 // other things
 use crate::config::{Button, ButtonConfigError};
-use crate::image_rendering::{retrieve_image, ImageBuilder};
-use ::image::imageops::FilterType;
-use ::image::io::Reader as ImageReader;
+use crate::image_rendering::ImageBuilder;
 use ::image::DynamicImage;
 use async_trait::async_trait;
-use base64::engine::{general_purpose, Engine};
 pub use deck_driver as streamdeck;
-use dirs::cache_dir;
 use futures_util::Future;
 use once_cell::sync::Lazy;
-use ring::digest;
 use std::collections::HashMap;
-use std::{error::Error, path::PathBuf, pin::Pin, sync::Arc};
+use std::{error::Error, pin::Pin, sync::Arc};
 use streamdeck::info::ImageFormat;
 use streamdeck::info::Kind;
 use streamdeck::AsyncStreamDeck;
 use streamdeck::StreamDeckError;
 use tokio::sync::mpsc;
-use tracing::{debug, error, trace};
+use tracing::{debug, error};
+
+pub mod prelude {
+    pub use super::{ChannelReceiver, DeviceAccess, HostEvent, Module, ModuleObject, ReturnError};
+    pub use crate::config::{Button, ButtonConfigError};
+    pub use crate::image_rendering::{cache::*, ImageBuilder};
+    pub use image::DynamicImage;
+}
 
 pub static MODULE_REGISTRY: Lazy<ModuleRegistry> = Lazy::new(|| ModuleRegistry::default());
 
@@ -112,82 +114,11 @@ pub async fn start_module(
                 .set_text(format!("E: {}", e))
                 .set_font_size(12.0)
                 .set_text_color([255, 0, 0])
-                .build();
+                .build()
+                .await;
             da.write_img(image).await.unwrap();
         }
     }
-}
-
-/// Loads an image from the system or retrieves it from the cache. If
-/// the provided image is not already in the cache it will be inserted.
-#[allow(dead_code)]
-pub async fn load_image(path: PathBuf, resolution: (usize, usize)) -> Option<DynamicImage> {
-    // hash the image
-    let mut image = tokio::task::spawn_blocking(move || retrieve_image(&path))
-        .await
-        .unwrap()
-        .ok()?;
-
-    let image_hash = hash_image(image.as_bytes());
-
-    if let Some(image) = get_image_from_cache(&image_hash, resolution) {
-        trace!("Cached image is available");
-        return Some(image);
-    }
-
-    // TODO prevent multiple buttons from resizing the same image at the same time (performance
-    // improvement)
-    let image = tokio::task::spawn_blocking(move || {
-        trace!("Resizing image");
-        image = image.resize_exact(
-            resolution.0 as u32,
-            resolution.1 as u32,
-            FilterType::Lanczos3,
-        );
-        trace!("Resizing finished");
-        let mut path = match cache_dir() {
-            Some(dir) => dir,
-            None => return None, // System does not provide cache
-        };
-        path.push("microdeck");
-        path.push(image_cache_file_name(&image_hash, resolution));
-
-        image.save(path).ok()?;
-        Some(image)
-    })
-    .await
-    .unwrap()?;
-    Some(image.into())
-}
-
-/// File name for a cached image
-///
-/// `<hash>-<height>x<width>`
-pub fn image_cache_file_name(image_hash: &str, resolution: (usize, usize)) -> String {
-    format!("{}-{}x{}.png", image_hash, resolution.0, resolution.1)
-}
-
-pub fn hash_image(data: &[u8]) -> String {
-    let mut context = digest::Context::new(&digest::SHA256);
-    context.update(data);
-    let hash = context.finish();
-    general_purpose::STANDARD.encode(hash)
-}
-
-/// Try to retrieve an image from the cache. Will return None if
-/// the image was not cached yet (or is not accessible)
-/// or if the system does not provide a [dirs::cache_dir].
-#[allow(dead_code)]
-pub fn get_image_from_cache(image_hash: &str, resolution: (usize, usize)) -> Option<DynamicImage> {
-    let mut path = match cache_dir() {
-        Some(dir) => dir,
-        None => return None, // System does not provide cache
-    };
-
-    path.push("microdeck");
-    path.push(image_cache_file_name(image_hash, resolution));
-
-    Some(ImageReader::open(path).ok()?.decode().ok()?)
 }
 
 /// Wrapper to provide easier access to the Deck
