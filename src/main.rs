@@ -11,6 +11,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
+use tokio::sync::Notify;
 use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::{
     self, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt, EnvFilter,
@@ -107,25 +108,12 @@ fn load_system_font() -> (Vec<u8>, i32) {
         .expect("Unable to load system monospace font. Please specify a custom font in the config.")
 }
 
-struct DeviceHandle<T> {
-    handle: tokio::task::JoinHandle<T>,
-    is_dead: Arc<Mutex<bool>>,
-}
-
-impl<T> DeviceHandle<T> {
-    fn new(handle: tokio::task::JoinHandle<T>, is_dead: Arc<Mutex<bool>>) -> Self {
-        DeviceHandle { handle, is_dead }
-    }
-    fn is_dead(&self) -> bool {
-        match self.is_dead.lock() {
-            Ok(guard) => *guard,
-            Err(_) => false,
-        }
-    }
-}
+type DeviceHandle<T> = tokio::task::JoinHandle<T>;
 
 async fn start(config: Config, mut hid: HidApi) {
-    let mut devices: HashMap<String, DeviceHandle<_>> = HashMap::new();
+    // This seems far too complex for what its actually doing
+    let devices: Arc<Mutex<HashMap<String, DeviceHandle<_>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     // devices which are not configured anyways
     let mut ignore_devices: Vec<String> = Vec::new();
@@ -138,20 +126,12 @@ async fn start(config: Config, mut hid: HidApi) {
         if let Err(e) = streamdeck::refresh_device_list(&mut hid) {
             warn!("Cannot fetch new devices: {}", e);
         } else {
+            trace!("Connected devices: {:?}", devices.lock().unwrap().keys());
             for hw_device in streamdeck::list_devices(&hid) {
-                // if the device is not already started or the device is
-                // dropped
-                if let Some(d) = devices.get(&hw_device.1) {
-                    if d.is_dead() {
-                        trace!("Removing dead device {}", &hw_device.1);
-                        d.handle.abort();
-                        devices.remove(&hw_device.1);
-                    } else {
-                        // ignore this device
-                        continue;
-                    }
-                }
-                if !ignore_devices.contains(&hw_device.1) {
+                // if the device is already started or is ignored
+                if !ignore_devices.contains(&hw_device.1)
+                    && !devices.lock().unwrap().contains_key(&hw_device.1)
+                {
                     // TODO: match regex for device serial
                     if let Some(device_config) = config
                         .devices
@@ -159,7 +139,8 @@ async fn start(config: Config, mut hid: HidApi) {
                         .find(|d| d.serial == hw_device.1 || d.serial == "*")
                     {
                         // start the device and its functions
-                        let is_dead = Arc::new(Mutex::new(false));
+                        // TODO: start monitor when device dies and remove from HashMap
+                        let is_dead = Arc::new(Notify::new());
                         if let Some(device) = start_device(
                             hw_device,
                             &hid,
@@ -171,7 +152,22 @@ async fn start(config: Config, mut hid: HidApi) {
                         {
                             let serial = device.serial();
                             let handle = tokio::spawn(init_device_functions(device));
-                            devices.insert(serial, DeviceHandle::new(handle, is_dead));
+                            {
+                                let mut devices = devices.lock().unwrap();
+                                devices.insert(serial.clone(), handle);
+                            }
+                            let is_dead_cloned = is_dead.clone();
+                            let devices_cloned = devices.clone();
+                            tokio::task::spawn(async move {
+                                is_dead_cloned.notified().await;
+                                let mut devices = devices_cloned.lock().unwrap();
+                                let device_handle =
+                                    devices.get(&serial).expect("Can't retrieve device handle");
+                                // kill runtime of device
+                                device_handle.abort();
+                                // remove device from list of active devices
+                                devices.remove(&serial);
+                            });
                         }
                     } else {
                         info!("The device {} is not configured.", hw_device.1);
@@ -198,7 +194,7 @@ async fn start_device(
     hid: &HidApi,
     device_config: DeviceConfig,
     spaces: Arc<HashMap<String, Space>>,
-    is_dead: Arc<Mutex<bool>>,
+    is_dead: Arc<Notify>,
 ) -> Option<Device> {
     match Device::new(device.1, device.0, device_config, is_dead, spaces, &hid).await {
         Ok(device) => {

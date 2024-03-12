@@ -15,6 +15,7 @@ use tokio::{
     process::Command,
     runtime::Runtime,
     sync::mpsc::{self, error::TrySendError},
+    sync::Notify,
 };
 use tracing::{debug, error, info_span, trace, warn};
 
@@ -49,7 +50,7 @@ pub struct Device {
     config: DeviceConfig,
     spaces: Arc<HashMap<String, Space>>,
     selected_space: Option<String>,
-    is_dead_handle: Arc<std::sync::Mutex<bool>>,
+    is_dead: Arc<Notify>,
     serial: String,
 }
 
@@ -58,7 +59,7 @@ impl Device {
         serial: String,
         kind: Kind,
         device_conf: DeviceConfig,
-        is_dead_handle: Arc<std::sync::Mutex<bool>>,
+        is_dead: Arc<Notify>,
         spaces: Arc<HashMap<String, Space>>,
         hid: &HidApi,
     ) -> Result<Device, DeviceError> {
@@ -91,7 +92,7 @@ impl Device {
             config: device_conf,
             spaces,
             selected_space: None,
-            is_dead_handle,
+            is_dead,
             serial,
         })
     }
@@ -160,16 +161,12 @@ impl Device {
     }
 
     /// Shutdown the runtime and therefore kill all the modules and
-    /// note death in field [self.is_dead_handle].
+    /// note death in field [self.is_dead].
     fn drop(&mut self) {
-        if let Some(handle) = self.modules_runtime.take() {
-            handle.shutdown_background();
-        }
-        self.modules = HashMap::new();
-        *self
-            .is_dead_handle
-            .lock()
-            .expect("Unable to lock Mutex to signal drop of device") = true;
+        debug!("Dropped device");
+        self.shutdown_modules();
+        // notify main that this device is dead now
+        self.is_dead.notify_one();
     }
 
     /// shutdown the runtime and therefore kill all the modules.
