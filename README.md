@@ -4,7 +4,7 @@ lang: en-us
 
 # ARCHIVED
 
-I've archived this project because with new experience I've noticed some things I'd like to change. The main change I will make in the next project is to have a single device using a single thread. I came to this decision mainly because a device is I/O bound anyway and the device infrastructure (with shared states) could be much simpler.
+I've archived this project because I want to change some things. In the next project, one device will use one thread. I decided this because devices are I/O bound and the shared state in the device infrastructure could be simplified (or often removed). This will greatly improve the visibility and maintainability of the code.
 
 ---
 
