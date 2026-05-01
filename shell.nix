@@ -12,7 +12,6 @@ mkShell {
 
   # runtime build deps
   buildInputs = [
-    udev
     freetype
     expat
   ];
