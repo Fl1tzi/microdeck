@@ -103,18 +103,9 @@ impl Module for SystemMetrics {
 
             let text = self.config.text_format.clone();
             let formatted_text = text
-                .replace(
-                    "{cpu}",
-                    &text_parts.get(0).cloned().unwrap_or_default().trim(),
-                )
-                .replace(
-                    "{mem}",
-                    &text_parts.get(1).cloned().unwrap_or(String::new()),
-                )
-                .replace(
-                    "{disk}",
-                    &text_parts.get(2).cloned().unwrap_or(String::new()),
-                );
+                .replace("{cpu}", &text_parts.get(0).cloned().unwrap_or_default())
+                .replace("{mem}", &text_parts.get(1).cloned().unwrap_or_default())
+                .replace("{disk}", &text_parts.get(2).cloned().unwrap_or_default());
 
             let image = ImageBuilder::new(res.0, res.1)
                 .set_text(formatted_text)
