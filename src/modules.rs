@@ -3,18 +3,18 @@ mod clock;
 mod counter;
 mod image;
 mod network_usage;
+mod pomodoro;
 mod space;
 mod system_metrics;
-mod pomodoro;
 
 // modules
 use self::clock::Clock;
 use self::counter::Counter;
 use self::image::Image;
 use self::network_usage::NetworkUsage;
+use self::pomodoro::Pomodoro;
 use self::space::Space;
 use self::system_metrics::SystemMetrics;
-use self::pomodoro::Pomodoro;
 
 // other things
 use crate::config::{Button, ButtonConfigError};
