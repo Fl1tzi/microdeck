@@ -496,7 +496,7 @@ impl Component for FolderIconComponent {
     }
 }
 
-fn draw_text_on_image(
+pub fn draw_text_on_image(
     text: String,
     mut image: RgbImage,
     color: Rgb<u8>,

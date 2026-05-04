@@ -1,7 +1,8 @@
 use super::prelude::*;
+use crate::image_rendering::{draw_text_on_image, wrap_text};
 use crate::GLOBAL_FONT;
 use async_trait::async_trait;
-use image::{DynamicImage, Rgba, RgbaImage};
+use image::{DynamicImage, Rgb, RgbImage, Rgba, RgbaImage};
 use imageproc::drawing::draw_text_mut;
 use rusttype::Scale;
 use std::process::{Child, Command, Stdio};
@@ -25,8 +26,6 @@ pub struct SystemCommand {
     status: CommandStatus,
     child_process: Option<Child>,
     button_pressed_at: Option<Instant>,
-    scroll_offset: f32,
-    text_width: f32,
     width: usize,
     height: usize,
 }
@@ -49,8 +48,6 @@ impl Module for SystemCommand {
             status: CommandStatus::Idle,
             child_process: None,
             button_pressed_at: None,
-            scroll_offset: 0.0,
-            text_width: 0.0,
             width: 0,
             height: 0,
         }))
@@ -95,16 +92,6 @@ impl Module for SystemCommand {
             }
 
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(200)) => {
-                    if self.text_width > self.width as f32 {
-                        self.scroll_offset -= 1.0;
-                        if self.scroll_offset <= -self.text_width {
-                            self.scroll_offset = self.width as f32;
-                        }
-                        let image = self.generate_image().await;
-                        streamdeck.write_img(image).await?;
-                    }
-                }
                 _ = button_receiver.recv() => {
                     let now = Instant::now();
                     if let Some(pressed_at) = self.button_pressed_at {
@@ -177,25 +164,6 @@ impl SystemCommand {
     async fn generate_image(&mut self) -> DynamicImage {
         let width = self.width;
         let height = self.height;
-        let mut img = RgbaImage::new(width as u32, height as u32);
-
-        for pixel in img.pixels_mut() {
-            *pixel = Rgba([0, 0, 0, 255]);
-        }
-
-        let bar_color = match self.status {
-            CommandStatus::Idle => Rgba([60, 60, 60, 255]),
-            CommandStatus::Running => Rgba([255, 200, 0, 255]),
-            CommandStatus::Finished => Rgba([0, 255, 0, 255]),
-            CommandStatus::Error => Rgba([255, 0, 0, 255]),
-        };
-
-        for x in 0..width as u32 {
-            img.put_pixel(x, 0, bar_color);
-        }
-
-        let font = &GLOBAL_FONT.get().unwrap();
-        let text_color = Rgba([255, 255, 255, 255]);
 
         let status_text = match self.status {
             CommandStatus::Idle => self.title.clone(),
@@ -210,65 +178,38 @@ impl SystemCommand {
             String::new()
         };
 
-        let title_scale = Scale::uniform(10.0);
-        let text_scale = Scale::uniform(12.0);
-
-        let status_text_width: f32 = status_text
-            .chars()
-            .map(|c| font.glyph(c).scaled(title_scale).h_metrics().advance_width)
-            .sum();
-
-        let display_text_width: f32 = if !display_text.is_empty() {
-            display_text
-                .chars()
-                .map(|c| font.glyph(c).scaled(text_scale).h_metrics().advance_width)
-                .sum()
-        } else {
-            0.0
-        };
-
-        self.text_width = status_text_width.max(display_text_width);
-        let needs_scroll = self.text_width > width as f32;
-
-        if needs_scroll && self.scroll_offset == 0.0 {
-            self.scroll_offset = width as f32;
-        } else if !needs_scroll {
-            self.scroll_offset = 0.0;
+        let mut full_text = status_text;
+        if !display_text.is_empty() {
+            full_text.push('\n');
+            full_text.push_str(&display_text);
         }
 
-        let title_x = if needs_scroll {
-            self.scroll_offset as i32
-        } else {
-            (width as i32 / 2) - (status_text_width / 2.0).round() as i32
+        let wrapped_text = wrap_text(width as u32, Scale::uniform(10.0), &full_text);
+
+        let text_with_offset = format!("\n{}", wrapped_text);
+
+        let mut rgb_img = RgbImage::new(width as u32, height as u32);
+        for pixel in rgb_img.pixels_mut() {
+            *pixel = Rgb([0, 0, 0]);
+        }
+
+        let text_color = Rgb([255, 255, 255]);
+        let rgb_img =
+            draw_text_on_image(text_with_offset, rgb_img, text_color, Scale::uniform(10.0));
+
+        let mut img = RgbaImage::new(width as u32, height as u32);
+        for (x, y, pixel) in rgb_img.enumerate_pixels() {
+            img.put_pixel(x, y, Rgba([pixel[0], pixel[1], pixel[2], 255]));
+        }
+
+        let bar_color = match self.status {
+            CommandStatus::Idle => Rgba([60, 60, 60, 255]),
+            CommandStatus::Running => Rgba([255, 200, 0, 255]),
+            CommandStatus::Finished => Rgba([0, 255, 0, 255]),
+            CommandStatus::Error => Rgba([255, 0, 0, 255]),
         };
-        let title_y = (height as f32 * 0.25) as i32;
-        draw_text_mut(
-            &mut img,
-            text_color,
-            title_x,
-            title_y,
-            title_scale,
-            font,
-            &status_text,
-        );
-
-        if !display_text.is_empty() {
-            let display_x = if needs_scroll {
-                self.scroll_offset as i32
-            } else {
-                (width as i32 / 2) - (display_text_width / 2.0).round() as i32
-            };
-            let display_y = (height as f32 * 0.6) as i32;
-
-            draw_text_mut(
-                &mut img,
-                text_color,
-                display_x,
-                display_y,
-                text_scale,
-                font,
-                &display_text,
-            );
+        for x in 0..width as u32 {
+            img.put_pixel(x, 0, bar_color);
         }
 
         DynamicImage::ImageRgba8(img)
