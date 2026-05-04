@@ -246,12 +246,14 @@ impl Device {
             execute_sh(&action).await
         }
         // switch space if needed
-        if options.0.module == "space" {
-            let name = match options.0.options.get("name") {
-                Some(n) => n.clone(),
-                None => return,
-            };
-            self.switch_to_space(name).await;
+        if let HostEvent::ButtonReleased = event {
+            if options.0.module == "space" {
+                let name = match options.0.options.get("name") {
+                    Some(n) => n.clone(),
+                    None => return,
+                };
+                self.switch_to_space(name).await;
+            }
         }
     }
 }
