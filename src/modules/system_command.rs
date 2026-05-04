@@ -9,6 +9,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+// TODO: Remember state when switching spaces.
+
 #[derive(Clone, Copy, PartialEq)]
 enum CommandStatus {
     Idle,
@@ -33,6 +35,7 @@ pub struct SystemCommand {
 #[async_trait]
 impl Module for SystemCommand {
     async fn new(config: Arc<Button>) -> Result<ModuleObject, ButtonConfigError> {
+        println!("NOTE that the system_command module is incomplete and can lead to processes not attached to the button. Use with caution.");
         let command = config
             .parse_module("command", "echo Hello".to_string())
             .res()?;
@@ -92,6 +95,12 @@ impl Module for SystemCommand {
             }
 
             tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                    if let Some(ref mut child) = self.child_process {
+                        let image = self.generate_image().await;
+                        streamdeck.write_img(image).await?;
+                    }
+                }
                 _ = button_receiver.recv() => {
                     let now = Instant::now();
                     if let Some(pressed_at) = self.button_pressed_at {
