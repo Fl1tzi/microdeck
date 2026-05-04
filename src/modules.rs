@@ -2,11 +2,13 @@ mod blank;
 mod counter;
 mod image;
 mod space;
+mod system_metrics;
 
 // modules
 use self::counter::Counter;
 use self::image::Image;
 use self::space::Space;
+use self::system_metrics::SystemMetrics;
 
 // other things
 use crate::config::{Button, ButtonConfigError};
@@ -61,6 +63,7 @@ impl Default for ModuleRegistry {
         modules.insert("space", Space::new as ModuleInitFunction);
         modules.insert("image", Image::new as ModuleInitFunction);
         modules.insert("counter", Counter::new as ModuleInitFunction);
+        modules.insert("system_metrics", SystemMetrics::new as ModuleInitFunction);
         ModuleRegistry { modules }
     }
 }
