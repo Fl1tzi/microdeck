@@ -1,4 +1,5 @@
 // multiple functions for rendering various images/buttons
+// TODO: This is a mess. I feel like I should use a proper rendering engine (for example HTML + CSS).
 //
 use crate::GLOBAL_FONT;
 use async_trait::async_trait;
