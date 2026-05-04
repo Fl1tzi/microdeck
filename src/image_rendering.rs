@@ -186,6 +186,7 @@ pub struct ImageBuilder {
     text: Option<String>,
     text_color: [u8; 3],
     image: Option<PathBuf>,
+    folder_icon: bool,
 }
 
 impl Default for ImageBuilder {
@@ -201,6 +202,7 @@ impl Default for ImageBuilder {
             // black
             text_color: [255, 255, 255],
             image: None,
+            folder_icon: false,
         }
     }
 }
@@ -245,6 +247,11 @@ impl ImageBuilder {
         self
     }
 
+    pub fn set_folder_icon(mut self) -> Self {
+        self.folder_icon = true;
+        self
+    }
+
     #[allow(dead_code)]
     pub async fn build(self) -> DynamicImage {
         // cannot use "if let" here, because variables would be moved
@@ -260,6 +267,17 @@ impl ImageBuilder {
             };
             return c.render().await;
         } else if let Some(text) = self.text {
+            // needs at least text
+            if self.folder_icon {
+                let c = FolderIconComponent {
+                    height: self.height,
+                    width: self.width,
+                    text: Some(text),
+                    font_size: self.font_size,
+                    text_color: self.text_color,
+                };
+                return c.render().await;
+            }
             let c = TextComponent {
                 height: self.height,
                 width: self.width,
@@ -388,6 +406,95 @@ impl Component for ImageTextComponent {
     }
 }
 
+struct FolderIconComponent {
+    height: usize,
+    width: usize,
+    text: Option<String>,
+    font_size: f32,
+    text_color: [u8; 3],
+}
+
+#[async_trait]
+impl Component for FolderIconComponent {
+    async fn render(self) -> DynamicImage {
+        let w = self.width as u32;
+        let h = self.height as u32;
+
+        let mut img = RgbImage::new(w, h);
+
+        let body_color = Rgb([255u8, 176, 28]);
+        let tab_color = Rgb([255u8, 198, 70]);
+        let shadow_color = Rgb([200u8, 130, 0]);
+        let highlight = Rgb([255u8, 220, 120]);
+
+        let font_scale = Scale::uniform(self.font_size);
+
+        // Reserve space at the bottom for text if needed
+        let text_area_h = if self.text.is_some() {
+            (self.font_size * 1.4) as u32
+        } else {
+            0
+        };
+
+        let folder_h = h - text_area_h;
+
+        let body_x = (w as f32 * 0.05) as u32;
+        let body_y = (folder_h as f32 * 0.40) as u32;
+        let body_w = (w as f32 * 0.90) as u32;
+        let body_h = (folder_h as f32 * 0.50) as u32;
+        let tab_w = (w as f32 * 0.35) as u32;
+        let tab_h = (folder_h as f32 * 0.12) as u32;
+        let tab_y = body_y - tab_h;
+        let radius = (body_h as f32 * 0.10) as u32;
+
+        // Shadow
+        draw_rounded_rect(
+            &mut img,
+            body_x + 2,
+            body_y + 4,
+            body_w,
+            body_h,
+            radius,
+            shadow_color,
+        );
+        // Body
+        draw_rounded_rect(&mut img, body_x, body_y, body_w, body_h, radius, body_color);
+        // Tab
+        fill_rect_img(&mut img, body_x, tab_y, tab_w, tab_h + 4, tab_color);
+        // Highlight stripe
+        fill_rect_img(
+            &mut img,
+            body_x + radius,
+            body_y + 2,
+            body_w - radius * 2,
+            (body_h as f32 * 0.08) as u32,
+            highlight,
+        );
+
+        // Draw text below the folder
+        if let Some(text) = self.text {
+            let text_color = Rgb(self.text_color);
+            let wrapped = wrap_text(w, font_scale, &text);
+            img = tokio::task::spawn_blocking(move || {
+                let font = &GLOBAL_FONT.get().unwrap();
+                let v_metrics = font.v_metrics(font_scale);
+                let line_height =
+                    (v_metrics.ascent - v_metrics.descent + v_metrics.line_gap).round() as i32;
+                let mut y_pos = folder_h as i32;
+                for line in wrapped.split('\n') {
+                    draw_text_mut(&mut img, text_color, 0, y_pos, font_scale, font, line);
+                    y_pos += line_height;
+                }
+                img
+            })
+            .await
+            .unwrap();
+        }
+
+        DynamicImage::ImageRgb8(img)
+    }
+}
+
 fn draw_text_on_image(
     text: String,
     image: RgbImage,
@@ -427,4 +534,33 @@ pub fn wrap_text(max_width: u32, font_size: Scale, text: &String) -> String {
         line_size += h_size.advance_width + h_size.left_side_bearing;
     }
     String::from_iter(new_text)
+}
+
+fn fill_rect_img(img: &mut RgbImage, x: u32, y: u32, w: u32, h: u32, color: Rgb<u8>) {
+    for py in y..y + h {
+        for px in x..x + w {
+            if px < img.width() && py < img.height() {
+                img.put_pixel(px, py, color);
+            }
+        }
+    }
+}
+
+fn draw_rounded_rect(img: &mut RgbImage, x: u32, y: u32, w: u32, h: u32, r: u32, color: Rgb<u8>) {
+    fill_rect_img(img, x + r, y, w - 2 * r, h, color);
+    fill_rect_img(img, x, y + r, r, h - 2 * r, color);
+    fill_rect_img(img, x + w - r, y + r, r, h - 2 * r, color);
+
+    let r = r as i64;
+    for dy in 0..r {
+        for dx in 0..r {
+            if dx * dx + dy * dy <= r * r {
+                let (xi, yi, wi, hi) = (x as i64, y as i64, w as i64, h as i64);
+                img.put_pixel((xi + r - 1 - dx) as u32, (yi + r - 1 - dy) as u32, color);
+                img.put_pixel((xi + wi - r + dx) as u32, (yi + r - 1 - dy) as u32, color);
+                img.put_pixel((xi + r - 1 - dx) as u32, (yi + hi - r + dy) as u32, color);
+                img.put_pixel((xi + wi - r + dx) as u32, (yi + hi - r + dy) as u32, color);
+            }
+        }
+    }
 }
