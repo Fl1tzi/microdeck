@@ -2,6 +2,7 @@ mod blank;
 mod clock;
 mod counter;
 mod image;
+mod network_usage;
 mod space;
 mod system_metrics;
 
@@ -9,6 +10,7 @@ mod system_metrics;
 use self::clock::Clock;
 use self::counter::Counter;
 use self::image::Image;
+use self::network_usage::NetworkUsage;
 use self::space::Space;
 use self::system_metrics::SystemMetrics;
 
@@ -67,6 +69,7 @@ impl Default for ModuleRegistry {
         modules.insert("counter", Counter::new as ModuleInitFunction);
         modules.insert("system_metrics", SystemMetrics::new as ModuleInitFunction);
         modules.insert("clock", Clock::new as ModuleInitFunction);
+        modules.insert("network_usage", NetworkUsage::new as ModuleInitFunction);
         ModuleRegistry { modules }
     }
 }
