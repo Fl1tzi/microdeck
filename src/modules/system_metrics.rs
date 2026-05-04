@@ -22,7 +22,7 @@ struct SystemMetricsConfig {
 #[async_trait]
 impl Module for SystemMetrics {
     async fn new(config: Arc<Button>) -> Result<ModuleObject, ButtonConfigError> {
-        let update_interval_ms = config.parse_module("update_interval_ms", 1000u64).res()?;
+        let update_interval_ms = config.parse_module("update_interval_ms", 5000u64).res()?;
 
         let show_cpu = config.parse_module("show_cpu", true).res()?;
 
