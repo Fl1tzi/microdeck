@@ -5,6 +5,7 @@ mod image;
 mod network_usage;
 mod pomodoro;
 mod space;
+mod system_command;
 mod system_metrics;
 
 // modules
@@ -14,6 +15,7 @@ use self::image::Image;
 use self::network_usage::NetworkUsage;
 use self::pomodoro::Pomodoro;
 use self::space::Space;
+use self::system_command::SystemCommand;
 use self::system_metrics::SystemMetrics;
 
 // other things
@@ -73,6 +75,7 @@ impl Default for ModuleRegistry {
         modules.insert("clock", Clock::new as ModuleInitFunction);
         modules.insert("network_usage", NetworkUsage::new as ModuleInitFunction);
         modules.insert("pomodoro", Pomodoro::new as ModuleInitFunction);
+        modules.insert("system_command", SystemCommand::new as ModuleInitFunction);
         ModuleRegistry { modules }
     }
 }
