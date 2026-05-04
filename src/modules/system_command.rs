@@ -133,7 +133,6 @@ impl SystemCommand {
         self.status = CommandStatus::Running;
         self.last_output.clear();
         self.last_exit_code = 0;
-        self.scroll_offset = self.width as f32;
 
         if let Some(mut child) = self.child_process.take() {
             let _ = child.kill();
@@ -172,7 +171,6 @@ impl SystemCommand {
             self.status = CommandStatus::Idle;
             self.last_output = "Cancelled".to_string();
             self.last_exit_code = 0;
-            self.scroll_offset = self.width as f32;
         }
     }
 
@@ -230,8 +228,19 @@ impl SystemCommand {
         };
 
         self.text_width = status_text_width.max(display_text_width);
+        let needs_scroll = self.text_width > width as f32;
 
-        let title_x = self.scroll_offset as i32;
+        if needs_scroll && self.scroll_offset == 0.0 {
+            self.scroll_offset = width as f32;
+        } else if !needs_scroll {
+            self.scroll_offset = 0.0;
+        }
+
+        let title_x = if needs_scroll {
+            self.scroll_offset as i32
+        } else {
+            (width as i32 / 2) - (status_text_width / 2.0).round() as i32
+        };
         let title_y = (height as f32 * 0.25) as i32;
         draw_text_mut(
             &mut img,
@@ -244,7 +253,11 @@ impl SystemCommand {
         );
 
         if !display_text.is_empty() {
-            let display_x = self.scroll_offset as i32;
+            let display_x = if needs_scroll {
+                self.scroll_offset as i32
+            } else {
+                (width as i32 / 2) - (display_text_width / 2.0).round() as i32
+            };
             let display_y = (height as f32 * 0.6) as i32;
 
             draw_text_mut(
