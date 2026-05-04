@@ -5,6 +5,7 @@ mod image;
 mod network_usage;
 mod space;
 mod system_metrics;
+mod pomodoro;
 
 // modules
 use self::clock::Clock;
@@ -13,6 +14,7 @@ use self::image::Image;
 use self::network_usage::NetworkUsage;
 use self::space::Space;
 use self::system_metrics::SystemMetrics;
+use self::pomodoro::Pomodoro;
 
 // other things
 use crate::config::{Button, ButtonConfigError};
@@ -70,6 +72,7 @@ impl Default for ModuleRegistry {
         modules.insert("system_metrics", SystemMetrics::new as ModuleInitFunction);
         modules.insert("clock", Clock::new as ModuleInitFunction);
         modules.insert("network_usage", NetworkUsage::new as ModuleInitFunction);
+        modules.insert("pomodoro", Pomodoro::new as ModuleInitFunction);
         ModuleRegistry { modules }
     }
 }
